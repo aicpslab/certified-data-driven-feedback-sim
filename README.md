@@ -6,8 +6,10 @@ Simulation and evaluation code for the lateral-vehicle benchmark of certified da
 
 ```text
 .
+├─ paper_lateral_figures/                        # Figures generated for the lateral-vehicle benchmark
 ├─ simulate_lateral_controller.m                 # Runs the three-horizon simulations, reports statistics, and generates figures
 ├─ lateral_controller.mat                        # Precomputed controllers, certified law libraries, and deployed executor data
+├─ lateral_simulation_results.mat                # Precomputed simulation results for the reported benchmark cases
 ├─ certnnmpc_executor_mex.mexw64                 # C-MEX implementation of the proposed and coverage-only controllers
 ├─ lateral_mpc_kwik_mex_Np15_Nc15.mexw64        # Condensed KWIK MPC baseline for Np = Nc = 15
 ├─ lateral_mpc_kwik_mex_Np40_Nc40.mexw64        # Condensed KWIK MPC baseline for Np = Nc = 40
