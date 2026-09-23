@@ -1,0 +1,1151 @@
+clear
+close all
+clc
+
+rng(1)
+
+scriptDir = fileparts(mfilename('fullpath'));
+addpath(scriptDir);
+
+%% Three-horizon evaluation setting
+
+[horizons,tolCertified] = deal([15 40 66],1e-7);
+[NmultiTarget,Nwarm] = deal(50,100);
+[representativeStatsEnd,randomStatsEnd,figFont] = deal(1.5,3.0,8);
+
+runMode = "report_and_plot";       % "simulate" or "report_and_plot"
+rebuildMpcMex = 0;      % optionally rebuild the condensed MPC MEX controllers, require Model Prediction Toolbox
+
+outputDir = fullfile(pwd,'paper_lateral_figures');
+resultFile = fullfile(scriptDir,'lateral_simulation_results.mat');
+
+if ~isfolder(outputDir)
+    mkdir(outputDir)
+end
+
+%% Release data
+
+storedRelease = load(fullfile(scriptDir,'lateral_controller.mat'),'release');
+release = storedRelease.release;
+
+%% Optional reconstruction of the condensed MPC MEX controllers
+
+if rebuildMpcMex
+    for iHorizon = 1:numel(horizons)
+        Np = horizons(iHorizon);
+        idController = find([release.Np] == Np,1);
+        fn_generate_lateral_kwik_mex(release(idController).kwikQp,release(idController).Np,release(idController).Nc);
+    end
+end
+
+%% Simulation or stored-result loading
+
+if runMode == "simulate"
+
+    idBase = find([release.Np] == horizons(1),1);
+    baseData = release(idBase);
+
+    [XiMultiInitial,initialSampleStats] = local_sample_feasible_initial_states(NmultiTarget,baseData.B0,baseData.d0,baseData.S,baseData.D,baseData.b,baseData.rho,tolCertified);
+
+    %% Complete simulation for each horizon
+
+    result = cell(1,numel(horizons));
+
+    for iHorizon = 1:numel(horizons)
+        Np = horizons(iHorizon);
+        idController = find([release.Np] == Np,1);
+        result{iHorizon} = local_simulate_horizon(release(idController),tolCertified,Nwarm,representativeStatsEnd,randomStatsEnd,XiMultiInitial);
+    end
+
+    reportRows = cellfun(@(R) R.reportRow,result,'UniformOutput',false);
+    threeHorizonReport = vertcat(reportRows{:});
+
+    save(resultFile,'result','threeHorizonReport','horizons','XiMultiInitial','initialSampleStats','representativeStatsEnd','randomStatsEnd','-v7.3')
+
+else
+
+    %% Reload reporting and plotting data
+
+    storedResult = load(resultFile,'result','threeHorizonReport','horizons','XiMultiInitial','initialSampleStats','representativeStatsEnd','randomStatsEnd');
+    [result,threeHorizonReport,horizons,initialSampleStats] = deal(storedResult.result,storedResult.threeHorizonReport,storedResult.horizons,storedResult.initialSampleStats);
+
+end
+
+%% Reports from stored simulation data
+for iHorizon = 1:numel(horizons)
+    reportStats = result{iHorizon}.reportStats;
+    reportRow = result{iHorizon}.reportRow;
+    if ~isfield(reportStats,'coverage')
+        idController = find([release.Np] == result{iHorizon}.Np,1);
+        reportStats.coverage = release(idController).controllerStats.coverage;
+    end
+    local_report_lateral(reportStats,initialSampleStats)
+    save(fullfile(outputDir,sprintf('lateral_report_Np%d_Nc%d.mat',result{iHorizon}.Np,result{iHorizon}.Nc)),'reportStats','reportRow')
+    writetable(reportRow,fullfile(outputDir,sprintf('lateral_report_Np%d_Nc%d.csv',result{iHorizon}.Np,result{iHorizon}.Nc)))
+end
+
+writetable(threeHorizonReport,fullfile(outputDir,'lateral_three_horizon_report.csv'))
+
+
+%% Publication figures
+
+figurePositionInfo = struct;
+idRepresentative = find(horizons == 40,1);
+figurePositionInfo.figure1 = local_plot_representative(outputDir,result{idRepresentative},figFont);
+
+for iHorizon = 1:numel(horizons)
+    figureName = sprintf('figure%d',iHorizon+1);
+    figurePositionInfo.(figureName) = local_plot_random_start(outputDir,result{iHorizon},figFont);
+end
+
+summaryPositionInfo = local_plot_horizon_summary(outputDir,result,horizons,figFont);
+figurePositionInfo.figure5 = summaryPositionInfo.figure5;
+figurePositionInfo.figure6 = summaryPositionInfo.figure6;
+figurePositionInfo.figure7 = summaryPositionInfo.figure7;
+
+
+%% Feasible random initial states
+
+function [X0,stats] = local_sample_feasible_initial_states(Nsample,B0,d0,S,D,b,rho,tol)
+
+[nx,ny] = deal(size(S,2),size(D,2));
+X0 = zeros(nx,Nsample);
+objective = zeros(ny,1);
+options = optimoptions('linprog','Algorithm','dual-simplex-highs','Display','none');
+[nAccepted,nProposed] = deal(0,0);
+[Sdomain,Ddomain,bDomain] = deal([B0;S],[zeros(size(B0,1),ny);D],[d0(:);b]);
+
+% Use the same rho-tightening as the offline coverage construction.
+[xiMin,xiMax] = deal(zeros(nx,1));
+
+for j = 1:nx
+    objectiveProjected = zeros(nx+ny,1);
+    objectiveProjected(j) = 1;
+    [~,xiMin(j),exitflagMin] = linprog(objectiveProjected,[Sdomain,Ddomain],bDomain,[],[],[],[],options);
+    [~,negativeXiMax,exitflagMax] = linprog(-objectiveProjected,[Sdomain,Ddomain],bDomain,[],[],[],[],options);
+
+    if exitflagMin ~= 1 || exitflagMax ~= 1
+        error('Unable to compute the projected feasible-state range for rho-tightening.')
+    end
+
+    xiMax(j) = -negativeXiMax;
+end
+
+Txi = diag(0.5*(xiMax-xiMin));
+coupledRow = any(S ~= 0,2) & any(D ~= 0,2);
+chi = zeros(size(b));
+chi(coupledRow) = vecnorm(S(coupledRow,:)*Txi,2,2);
+bRho = b-rho*chi;
+
+while nAccepted < Nsample
+    nProposed = nProposed+1;
+    xi = xiMin+(xiMax-xiMin).*rand(nx,1);
+    [y,~,exitflag] = linprog(objective,D,bRho-S*xi,[],[],[],[],options);
+
+    if exitflag == 1 && max(B0*xi-d0) <= tol && max(S*xi+D*y-bRho) <= tol
+        nAccepted = nAccepted+1;
+        X0(:,nAccepted) = xi;
+    end
+end
+
+stats = struct;
+[stats.accepted,stats.proposed,stats.acceptance_rate,stats.rho,stats.tolerance] = deal(nAccepted,nProposed,nAccepted/nProposed,rho,tol);
+
+end
+
+
+%% One-horizon simulation
+
+function R = local_simulate_horizon(controller,tolCertified,Nwarm,representativeStatsEnd,randomStatsEnd,XiMultiInitial)
+
+[Np,Nc,Ts] = deal(controller.Np,controller.Nc,controller.Ts);
+[A,B,Cy,Dy,yMax] = deal(controller.A,controller.B,controller.Cy,controller.Dy,controller.yMax);
+[B0,d0,S,D,b] = deal(controller.B0,controller.d0,controller.S,controller.D,controller.b);
+[L_act,L_cov] = deal(controller.L_act,controller.L_cov);
+kwikMexPackage = controller.kwikMexPackage;
+kwikQp = controller.kwikQp;
+[mexModel,mexModelUntrained] = deal(controller.mexModelProposed,controller.mexModelCoverageOnly);
+[offlineStats,controllerStats] = deal(controller.offlineStats,controller.controllerStats);
+
+%% KWIK MPC and dimensions
+
+nu = size(B,2);
+clear mex
+
+kwikMex = str2func(kwikMexPackage.name);
+assert(exist(kwikMexPackage.name,'file') == 3,'Missing generated KWIK MEX %s.%s.',kwikMexPackage.name,mexext)
+kwikOptions = mpcActiveSetOptions('double');
+[kwikOptions.UseHessianAsInput,kwikOptions.IntegrityChecks] = deal(false,false);
+[kwikOptions.MaxIterations,kwikOptions.ConstraintTolerance] = deal(kwikQp.maxIterations,kwikQp.constraintTolerance);
+
+%% C-MEX executor
+
+certnnmpc_executor_mex('init',mexModel);
+
+xiInitial = [0.5;0;0;0];
+L_perfEmpty = L_act([]);
+NsimRepresentative = round(representativeStatsEnd/Ts);
+NsimRandom = round(randomStatsEnd/Ts);
+tRepresentative = (0:NsimRepresentative-1)*Ts;
+tRandom = (0:NsimRandom-1)*Ts;
+
+%% Representative MPC closed loop
+
+[Xmpc,Umpc,Tmpc] = local_rollout_mpc_kwik(xiInitial,NsimRepresentative,Nwarm,A,B,kwikMex,kwikMexPackage.warmStartResetInput);
+
+NmpcOnline = sum(all(isfinite(Umpc),1));
+ResMpc = local_mpc_residual_replay(Xmpc,Umpc,NmpcOnline,kwikQp,kwikOptions,S,D,b);
+
+%% Representative Proposed and Coverage-only C-MEX closed loops
+
+certnnmpc_executor_mex('clear');
+certnnmpc_executor_mex('init',mexModel);
+[Xtrained,Utrained,Ttrained,ResTrained,backupStatsTrained] = local_rollout_mex(xiInitial,NsimRepresentative,Nwarm,A,B,S,D,b,L_act,L_cov);
+
+certnnmpc_executor_mex('clear');
+certnnmpc_executor_mex('init',mexModelUntrained);
+[Xuntrained,Uuntrained,Tuntrained,ResUntrained,backupStatsUntrained] = local_rollout_mex(xiInitial,NsimRepresentative,Nwarm,A,B,S,D,b,L_perfEmpty,L_cov);
+
+%% Same-state and own-state reference-policy comparisons
+
+certnnmpc_executor_mex('clear');
+certnnmpc_executor_mex('init',mexModel);
+certnnmpc_executor_mex('reset');
+Uteacher = nan(nu,NsimRepresentative);
+
+for k = 1:NsimRepresentative
+    if any(~isfinite(Xmpc(:,k))), break, end
+    Uteacher(:,k) = certnnmpc_executor_mex(Xmpc(:,k));
+end
+
+Uoracle = local_replay_mpc_actions(Xtrained(:,1:NsimRepresentative),kwikMex,kwikMexPackage.warmStartResetInput,nu);
+
+%% Representative statistics
+
+[Nmpc,Ntrained,Nuntrained] = deal(sum(all(isfinite(Umpc),1)),sum(all(isfinite(Utrained),1)),sum(all(isfinite(Uuntrained),1)));
+Ncommon = min(Nmpc,Ntrained);
+idCommon = 1:Ncommon;
+
+CurrentResMpc = local_current_output_residual(Xmpc,Umpc,Cy,Dy,yMax);
+CurrentResTrained = local_current_output_residual(Xtrained,Utrained,Cy,Dy,yMax);
+CurrentResUntrained = local_current_output_residual(Xuntrained,Uuntrained,Cy,Dy,yMax);
+DomainResMpc = local_domain_residual(Xmpc,Umpc,B0,d0);
+DomainResTrained = local_domain_residual(Xtrained,Utrained,B0,d0);
+DomainResUntrained = local_domain_residual(Xuntrained,Uuntrained,B0,d0);
+
+[errTeacher,errOracle,errNominal] = deal(abs(Uteacher(:,idCommon)-Umpc(:,idCommon)),abs(Utrained(:,idCommon)-Uoracle(:,idCommon)),abs(Utrained(:,idCommon)-Umpc(:,idCommon)));
+stateError = vecnorm((Xtrained(:,idCommon)-Xmpc(:,idCommon))./[1;0.1;0.1;0.8],2,1);
+
+[timeMpc,timeTrained,timeUntrained] = deal(Tmpc(1:Nmpc)*1e6,Ttrained(1:Ntrained)*1e6,Tuntrained(1:Nuntrained)*1e6);
+[JeMpc,JeTrained,JeUntrained] = deal(Ts*sum(abs(Xmpc(1,1:Nmpc))),Ts*sum(abs(Xtrained(1,1:Ntrained))),Ts*sum(abs(Xuntrained(1,1:Nuntrained))));
+
+closedStats = struct;
+closedStats.duration_s = representativeStatsEnd;
+[closedStats.Nmpc,closedStats.Ntrained,closedStats.Nuntrained] = deal(Nmpc,Ntrained,Nuntrained);
+[closedStats.backup_calls_trained,closedStats.backup_calls_untrained] = deal(backupStatsTrained.backup_calls,backupStatsUntrained.backup_calls);
+[closedStats.backup_rate_trained,closedStats.backup_rate_untrained] = deal(backupStatsTrained.backup_calls/max(Ntrained,1),backupStatsUntrained.backup_calls/max(Nuntrained,1));
+[closedStats.Je_mpc,closedStats.Je_trained,closedStats.Je_untrained] = deal(JeMpc,JeTrained,JeUntrained);
+[closedStats.Je_change_trained_percent,closedStats.Je_change_untrained_percent] = deal(100*(JeTrained-JeMpc)/max(abs(JeMpc),eps),100*(JeUntrained-JeMpc)/max(abs(JeMpc),eps));
+[closedStats.e_rms_mpc,closedStats.e_rms_trained,closedStats.e_rms_untrained] = deal(sqrt(mean(Xmpc(1,1:Nmpc).^2)),sqrt(mean(Xtrained(1,1:Ntrained).^2)),sqrt(mean(Xuntrained(1,1:Nuntrained).^2)));
+[closedStats.e_max_mpc,closedStats.e_max_trained,closedStats.e_max_untrained] = deal(max(abs(Xmpc(1,1:Nmpc))),max(abs(Xtrained(1,1:Ntrained))),max(abs(Xuntrained(1,1:Nuntrained))));
+[closedStats.delta_rms_mpc,closedStats.delta_rms_trained,closedStats.delta_rms_untrained] = deal(sqrt(mean(Umpc(:,1:Nmpc).^2,'all')),sqrt(mean(Utrained(:,1:Ntrained).^2,'all')),sqrt(mean(Uuntrained(:,1:Nuntrained).^2,'all')));
+[closedStats.delta_max_mpc,closedStats.delta_max_trained,closedStats.delta_max_untrained] = deal(max(abs(Umpc(:,1:Nmpc)),[],'all'),max(abs(Utrained(:,1:Ntrained)),[],'all'),max(abs(Uuntrained(:,1:Nuntrained)),[],'all'));
+
+[closedStats.max_residual_mpc,closedStats.max_residual_trained,closedStats.max_residual_untrained] = deal(local_max_or_nan(ResMpc),local_max_or_nan(ResTrained),local_max_or_nan(ResUntrained));
+[closedStats.max_violation_mpc,closedStats.max_violation_trained,closedStats.max_violation_untrained] = deal(max(0,closedStats.max_residual_mpc),max(0,closedStats.max_residual_trained),max(0,closedStats.max_residual_untrained));
+[closedStats.violation_mpc,closedStats.violation_trained,closedStats.violation_untrained] = deal(nnz(ResMpc > tolCertified),nnz(ResTrained > tolCertified),nnz(ResUntrained > tolCertified));
+[closedStats.horizon_certified_mpc,closedStats.horizon_certified_trained,closedStats.horizon_certified_untrained] = deal(nnz(isfinite(ResMpc)),nnz(isfinite(ResTrained)),nnz(isfinite(ResUntrained)));
+[closedStats.horizon_uncertified_mpc,closedStats.horizon_uncertified_trained,closedStats.horizon_uncertified_untrained] = deal(Nmpc-closedStats.horizon_certified_mpc,Ntrained-closedStats.horizon_certified_trained,Nuntrained-closedStats.horizon_certified_untrained);
+
+[closedStats.current_output_max_residual_mpc,closedStats.current_output_max_residual_trained,closedStats.current_output_max_residual_untrained] = deal(local_max_or_nan(CurrentResMpc),local_max_or_nan(CurrentResTrained),local_max_or_nan(CurrentResUntrained));
+[closedStats.current_output_max_violation_mpc,closedStats.current_output_max_violation_trained,closedStats.current_output_max_violation_untrained] = deal(max(0,closedStats.current_output_max_residual_mpc),max(0,closedStats.current_output_max_residual_trained),max(0,closedStats.current_output_max_residual_untrained));
+[closedStats.current_output_violation_mpc,closedStats.current_output_violation_trained,closedStats.current_output_violation_untrained] = deal(nnz(CurrentResMpc > tolCertified),nnz(CurrentResTrained > tolCertified),nnz(CurrentResUntrained > tolCertified));
+[closedStats.domain_max_residual_mpc,closedStats.domain_max_residual_trained,closedStats.domain_max_residual_untrained] = deal(local_max_or_nan(DomainResMpc),local_max_or_nan(DomainResTrained),local_max_or_nan(DomainResUntrained));
+[closedStats.domain_exit_mpc,closedStats.domain_exit_trained,closedStats.domain_exit_untrained] = deal(nnz(DomainResMpc > tolCertified),nnz(DomainResTrained > tolCertified),nnz(DomainResUntrained > tolCertified));
+
+[closedStats.time_mean_mpc,closedStats.time_mean_trained,closedStats.time_mean_untrained] = deal(mean(timeMpc),mean(timeTrained),mean(timeUntrained));
+[closedStats.time_p95_mpc,closedStats.time_p95_trained,closedStats.time_p95_untrained] = deal(prctile(timeMpc,95),prctile(timeTrained,95),prctile(timeUntrained,95));
+[closedStats.time_p99_mpc,closedStats.time_p99_trained,closedStats.time_p99_untrained] = deal(prctile(timeMpc,99),prctile(timeTrained,99),prctile(timeUntrained,99));
+[closedStats.time_max_mpc,closedStats.time_max_trained,closedStats.time_max_untrained] = deal(max(timeMpc),max(timeTrained),max(timeUntrained));
+[closedStats.same_state_mean,closedStats.same_state_rms,closedStats.same_state_max] = deal(mean(errTeacher,'all'),sqrt(mean(errTeacher.^2,'all')),max(errTeacher,[],'all'));
+[closedStats.own_state_mean,closedStats.own_state_rms,closedStats.own_state_max] = deal(mean(errOracle,'all'),sqrt(mean(errOracle.^2,'all')),max(errOracle,[],'all'));
+[closedStats.free_rollout_mean,closedStats.free_rollout_rms,closedStats.free_rollout_max] = deal(mean(errNominal,'all'),sqrt(mean(errNominal.^2,'all')),max(errNominal,[],'all'));
+[closedStats.state_error_mean,closedStats.state_error_rms,closedStats.state_error_max] = deal(mean(stateError),sqrt(mean(stateError.^2)),max(stateError));
+
+%% Random-start MPC, Proposed, and Coverage-only closed loops
+
+[XmultiMpc,UmultiMpc,TmultiMpc,ResMultiMpc,NstepMultiMpc] = local_rollout_mpc_batch(XiMultiInitial,NsimRandom,Nwarm,A,B,kwikMex,kwikMexPackage.warmStartResetInput,kwikQp,kwikOptions,S,D,b);
+
+certnnmpc_executor_mex('clear');
+certnnmpc_executor_mex('init',mexModel);
+[XmultiTrained,UmultiTrained,TmultiTrained,ResMultiTrained,NstepMultiTrained,backupMultiTrained] = local_rollout_mex_batch(XiMultiInitial,NsimRandom,Nwarm,A,B,S,D,b,L_act,L_cov);
+
+certnnmpc_executor_mex('clear');
+certnnmpc_executor_mex('init',mexModelUntrained);
+[XmultiUntrained,UmultiUntrained,TmultiUntrained,ResMultiUntrained,NstepMultiUntrained,backupMultiUntrained] = local_rollout_mex_batch(XiMultiInitial,NsimRandom,Nwarm,A,B,S,D,b,L_perfEmpty,L_cov);
+certnnmpc_executor_mex('clear');
+
+%% Random-start statistics
+
+CurrentResMultiMpc = local_current_output_residual(XmultiMpc,UmultiMpc,Cy,Dy,yMax);
+CurrentResMultiTrained = local_current_output_residual(XmultiTrained,UmultiTrained,Cy,Dy,yMax);
+CurrentResMultiUntrained = local_current_output_residual(XmultiUntrained,UmultiUntrained,Cy,Dy,yMax);
+DomainResMultiMpc = local_domain_residual(XmultiMpc,UmultiMpc,B0,d0);
+DomainResMultiTrained = local_domain_residual(XmultiTrained,UmultiTrained,B0,d0);
+DomainResMultiUntrained = local_domain_residual(XmultiUntrained,UmultiUntrained,B0,d0);
+
+[JeMultiMpc,JeMultiTrained,JeMultiUntrained] = deal(reshape(Ts*sum(abs(XmultiMpc(1,1:NsimRandom,:)),2,'omitnan'),1,[]),reshape(Ts*sum(abs(XmultiTrained(1,1:NsimRandom,:)),2,'omitnan'),1,[]),reshape(Ts*sum(abs(XmultiUntrained(1,1:NsimRandom,:)),2,'omitnan'),1,[]));
+JeMultiMpc(NstepMultiMpc < NsimRandom) = nan;
+JeMultiTrained(NstepMultiTrained < NsimRandom) = nan;
+JeMultiUntrained(NstepMultiUntrained < NsimRandom) = nan;
+idCompleteTriple = NstepMultiMpc == NsimRandom & NstepMultiTrained == NsimRandom & NstepMultiUntrained == NsimRandom;
+
+[JeChangeMultiTrained,JeChangeMultiUntrained] = deal(100*(JeMultiTrained-JeMultiMpc)./max(abs(JeMultiMpc),eps),100*(JeMultiUntrained-JeMultiMpc)./max(abs(JeMultiMpc),eps));
+[timeMultiMpc,timeMultiTrained,timeMultiUntrained] = deal(TmultiMpc(isfinite(TmultiMpc))*1e6,TmultiTrained(isfinite(TmultiTrained))*1e6,TmultiUntrained(isfinite(TmultiUntrained))*1e6);
+[validJeMpc,validJeTrained,validJeUntrained] = deal(JeMultiMpc(isfinite(JeMultiMpc)),JeMultiTrained(isfinite(JeMultiTrained)),JeMultiUntrained(isfinite(JeMultiUntrained)));
+
+multiStats = struct;
+[multiStats.Nstart,multiStats.Nsim,multiStats.duration_s,multiStats.tol_violation] = deal(size(XiMultiInitial,2),NsimRandom,randomStatsEnd,tolCertified);
+[multiStats.completed_mpc,multiStats.completed_trained,multiStats.completed_untrained] = deal(sum(NstepMultiMpc == NsimRandom),sum(NstepMultiTrained == NsimRandom),sum(NstepMultiUntrained == NsimRandom));
+[multiStats.query_mpc,multiStats.query_trained,multiStats.query_untrained] = deal(nnz(isfinite(ResMultiMpc)),nnz(isfinite(ResMultiTrained)),nnz(isfinite(ResMultiUntrained)));
+[multiStats.horizon_uncertified_mpc,multiStats.horizon_uncertified_trained,multiStats.horizon_uncertified_untrained] = deal(nnz(isfinite(CurrentResMultiMpc) & ~isfinite(ResMultiMpc)),nnz(isfinite(CurrentResMultiTrained) & ~isfinite(ResMultiTrained)),nnz(isfinite(CurrentResMultiUntrained) & ~isfinite(ResMultiUntrained)));
+[multiStats.violation_mpc,multiStats.violation_trained,multiStats.violation_untrained] = deal(nnz(ResMultiMpc > tolCertified),nnz(ResMultiTrained > tolCertified),nnz(ResMultiUntrained > tolCertified));
+[multiStats.violation_rate_mpc,multiStats.violation_rate_trained,multiStats.violation_rate_untrained] = deal(multiStats.violation_mpc/max(multiStats.query_mpc,1),multiStats.violation_trained/max(multiStats.query_trained,1),multiStats.violation_untrained/max(multiStats.query_untrained,1));
+[multiStats.trajectory_violation_rate_mpc,multiStats.trajectory_violation_rate_trained,multiStats.trajectory_violation_rate_untrained] = deal(mean(any(ResMultiMpc > tolCertified,1)),mean(any(ResMultiTrained > tolCertified,1)),mean(any(ResMultiUntrained > tolCertified,1)));
+[multiStats.max_residual_mpc,multiStats.max_residual_trained,multiStats.max_residual_untrained] = deal(local_max_or_nan(ResMultiMpc),local_max_or_nan(ResMultiTrained),local_max_or_nan(ResMultiUntrained));
+[multiStats.max_violation_mpc,multiStats.max_violation_trained,multiStats.max_violation_untrained] = deal(max(0,multiStats.max_residual_mpc),max(0,multiStats.max_residual_trained),max(0,multiStats.max_residual_untrained));
+
+[multiStats.executed_queries_mpc,multiStats.executed_queries_trained,multiStats.executed_queries_untrained] = deal(nnz(isfinite(CurrentResMultiMpc)),nnz(isfinite(CurrentResMultiTrained)),nnz(isfinite(CurrentResMultiUntrained)));
+[multiStats.current_output_violation_mpc,multiStats.current_output_violation_trained,multiStats.current_output_violation_untrained] = deal(nnz(CurrentResMultiMpc > tolCertified),nnz(CurrentResMultiTrained > tolCertified),nnz(CurrentResMultiUntrained > tolCertified));
+[multiStats.current_output_violation_rate_mpc,multiStats.current_output_violation_rate_trained,multiStats.current_output_violation_rate_untrained] = deal(multiStats.current_output_violation_mpc/max(multiStats.executed_queries_mpc,1),multiStats.current_output_violation_trained/max(multiStats.executed_queries_trained,1),multiStats.current_output_violation_untrained/max(multiStats.executed_queries_untrained,1));
+[multiStats.current_output_trajectory_violation_rate_mpc,multiStats.current_output_trajectory_violation_rate_trained,multiStats.current_output_trajectory_violation_rate_untrained] = deal(mean(any(CurrentResMultiMpc > tolCertified,1)),mean(any(CurrentResMultiTrained > tolCertified,1)),mean(any(CurrentResMultiUntrained > tolCertified,1)));
+[multiStats.current_output_max_residual_mpc,multiStats.current_output_max_residual_trained,multiStats.current_output_max_residual_untrained] = deal(local_max_or_nan(CurrentResMultiMpc),local_max_or_nan(CurrentResMultiTrained),local_max_or_nan(CurrentResMultiUntrained));
+[multiStats.current_output_max_violation_mpc,multiStats.current_output_max_violation_trained,multiStats.current_output_max_violation_untrained] = deal(max(0,multiStats.current_output_max_residual_mpc),max(0,multiStats.current_output_max_residual_trained),max(0,multiStats.current_output_max_residual_untrained));
+[multiStats.domain_exit_mpc,multiStats.domain_exit_trained,multiStats.domain_exit_untrained] = deal(nnz(DomainResMultiMpc > tolCertified),nnz(DomainResMultiTrained > tolCertified),nnz(DomainResMultiUntrained > tolCertified));
+[multiStats.domain_exit_rate_mpc,multiStats.domain_exit_rate_trained,multiStats.domain_exit_rate_untrained] = deal(multiStats.domain_exit_mpc/max(multiStats.executed_queries_mpc,1),multiStats.domain_exit_trained/max(multiStats.executed_queries_trained,1),multiStats.domain_exit_untrained/max(multiStats.executed_queries_untrained,1));
+[multiStats.domain_max_residual_mpc,multiStats.domain_max_residual_trained,multiStats.domain_max_residual_untrained] = deal(local_max_or_nan(DomainResMultiMpc),local_max_or_nan(DomainResMultiTrained),local_max_or_nan(DomainResMultiUntrained));
+
+[multiStats.Je_mean_mpc,multiStats.Je_mean_trained,multiStats.Je_mean_untrained] = deal(mean(validJeMpc),mean(validJeTrained),mean(validJeUntrained));
+[multiStats.Je_median_mpc,multiStats.Je_median_trained,multiStats.Je_median_untrained] = deal(median(validJeMpc),median(validJeTrained),median(validJeUntrained));
+[multiStats.Je_p90_mpc,multiStats.Je_p90_trained,multiStats.Je_p90_untrained] = deal(prctile(validJeMpc,90),prctile(validJeTrained,90),prctile(validJeUntrained,90));
+[multiStats.Je_p99_mpc,multiStats.Je_p99_trained,multiStats.Je_p99_untrained] = deal(prctile(validJeMpc,99),prctile(validJeTrained,99),prctile(validJeUntrained,99));
+[multiStats.Je_max_mpc,multiStats.Je_max_trained,multiStats.Je_max_untrained] = deal(max(validJeMpc),max(validJeTrained),max(validJeUntrained));
+[multiStats.Je_change_median_trained,multiStats.Je_change_median_untrained] = deal(median(JeChangeMultiTrained,'omitnan'),median(JeChangeMultiUntrained,'omitnan'));
+
+pairedTrained = JeMultiTrained(idCompleteTriple) < JeMultiUntrained(idCompleteTriple);
+pairedEqual = JeMultiTrained(idCompleteTriple) == JeMultiUntrained(idCompleteTriple);
+[multiStats.better_count,multiStats.unchanged_count,multiStats.degraded_count] = deal(nnz(pairedTrained),nnz(pairedEqual),nnz(~pairedTrained & ~pairedEqual));
+multiStats.better_rate = multiStats.better_count/max(nnz(idCompleteTriple),1);
+JeDeltaPair = JeMultiUntrained(idCompleteTriple)-JeMultiTrained(idCompleteTriple);
+JeRelImprovePair = JeDeltaPair./max(JeMultiUntrained(idCompleteTriple),eps);
+[multiStats.Je_delta_mean,multiStats.Je_delta_median,multiStats.Je_delta_min,multiStats.Je_delta_max] = deal(mean(JeDeltaPair),median(JeDeltaPair),min(JeDeltaPair),max(JeDeltaPair));
+[multiStats.Je_rel_improve_mean,multiStats.Je_rel_improve_median] = deal(mean(JeRelImprovePair),median(JeRelImprovePair));
+
+[multiStats.time_mean_mpc,multiStats.time_mean_trained,multiStats.time_mean_untrained] = deal(mean(timeMultiMpc),mean(timeMultiTrained),mean(timeMultiUntrained));
+[multiStats.time_p95_mpc,multiStats.time_p95_trained,multiStats.time_p95_untrained] = deal(prctile(timeMultiMpc,95),prctile(timeMultiTrained,95),prctile(timeMultiUntrained,95));
+[multiStats.time_p99_mpc,multiStats.time_p99_trained,multiStats.time_p99_untrained] = deal(prctile(timeMultiMpc,99),prctile(timeMultiTrained,99),prctile(timeMultiUntrained,99));
+[multiStats.time_max_mpc,multiStats.time_max_trained,multiStats.time_max_untrained] = deal(max(timeMultiMpc),max(timeMultiTrained),max(timeMultiUntrained));
+[multiStats.backup_calls_trained,multiStats.backup_calls_untrained] = deal(sum(backupMultiTrained),sum(backupMultiUntrained));
+[multiStats.backup_rate_trained,multiStats.backup_rate_untrained] = deal(sum(backupMultiTrained)/max(multiStats.executed_queries_trained,1),sum(backupMultiUntrained)/max(multiStats.executed_queries_untrained,1));
+[multiStats.max_abs_error_mpc,multiStats.max_abs_error_trained,multiStats.max_abs_error_untrained] = deal(max(abs(XmultiMpc(1,:,:)),[],'all','omitnan'),max(abs(XmultiTrained(1,:,:)),[],'all','omitnan'),max(abs(XmultiUntrained(1,:,:)),[],'all','omitnan'));
+
+%% Complete stored report
+
+reportStats = struct;
+reportStats.problem = struct;
+[reportStats.problem.Np,reportStats.problem.Nc] = deal(Np,Nc);
+[reportStats.problem.n_xi,reportStats.problem.n_u,reportStats.problem.n_w] = deal(size(S,2),nu,size(D,2)-nu);
+[reportStats.problem.n_constraint,reportStats.problem.n_domain_constraint] = deal(size(S,1),size(B0,1));
+reportStats.timing_standard = struct;
+[reportStats.timing_standard.scope,reportStats.timing_standard.timer] = deal('condensed KWIK MPC MEX call latency','MATLAB tic/toc for each online controller call');
+[reportStats.timing_standard.mpc_input_preparation_included,reportStats.timing_standard.mex_marshalling_included] = deal(true,true);
+[reportStats.timing_standard.plant_propagation_included,reportStats.timing_standard.diagnostic_outputs_timed] = deal(false,false);
+[reportStats.timing_standard.mpc_timed_outputs,reportStats.timing_standard.executor_timed_outputs] = deal('scalar control only','control only');
+[reportStats.timing_standard.diagnostic_replay,reportStats.timing_standard.warmup_calls] = deal('outside timed region',Nwarm);
+reportStats.timing_standard.logical_state_reset_after_warmup = true;
+reportStats.violation_standard = struct('tolerance',tolCertified,'current_output','max([Cy*xi+Dy*u-yMax; -Cy*xi-Dy*u-yMax])','horizon','max(S*xi+D*U-b)','operating_domain','max(B0*xi-d0)');
+[reportStats.network,reportStats.library,reportStats.offline] = deal(controllerStats.network,controllerStats.library,offlineStats);
+reportStats.coverage = controllerStats.coverage;
+[reportStats.closed_loop,reportStats.random_start] = deal(closedStats,multiStats);
+reportStats.random_start.initial_states = XiMultiInitial;
+[reportStats.random_start.Je_mpc,reportStats.random_start.Je_trained,reportStats.random_start.Je_untrained] = deal(JeMultiMpc,JeMultiTrained,JeMultiUntrained);
+[reportStats.random_start.Je_change_trained,reportStats.random_start.Je_change_untrained] = deal(JeChangeMultiTrained,JeChangeMultiUntrained);
+reportStats.random_start.complete_triple = idCompleteTriple;
+
+reportRow = table(Np,Nc,controllerStats.library.performance_laws,controllerStats.library.coverage_laws_raw,controllerStats.library.coverage_laws_reduced,controllerStats.library.total_deployed_laws,offlineStats.performance_library_s,offlineStats.coverage_construction_s,offlineStats.coverage_reduction_s,offlineStats.network_training_s,offlineStats.total_s,closedStats.Je_mpc,closedStats.Je_trained,closedStats.Je_untrained,multiStats.Je_median_mpc,multiStats.Je_median_trained,multiStats.Je_median_untrained,multiStats.Je_change_median_trained,multiStats.Je_change_median_untrained,multiStats.time_mean_mpc,multiStats.time_mean_trained,multiStats.time_mean_untrained,multiStats.time_p95_mpc,multiStats.time_p95_trained,multiStats.time_p95_untrained,multiStats.current_output_violation_mpc,multiStats.current_output_violation_trained,multiStats.current_output_violation_untrained,multiStats.violation_mpc,multiStats.violation_trained,multiStats.violation_untrained,multiStats.horizon_uncertified_mpc,multiStats.horizon_uncertified_trained,multiStats.horizon_uncertified_untrained,multiStats.backup_calls_trained,multiStats.backup_calls_untrained,'VariableNames',{'Np','Nc','Nperf','NcovRaw','Ncov','Nlaw','PerformanceBuild_s','CoverageBuild_s','CoverageReduction_s','Training_s','OfflineTotal_s','RepresentativeJeMpc','RepresentativeJeProposed','RepresentativeJeCoverageOnly','RandomJeMedianMpc','RandomJeMedianProposed','RandomJeMedianCoverageOnly','RandomDeltaJeMedianProposed_percent','RandomDeltaJeMedianCoverageOnly_percent','RandomTimeMeanMpc_us','RandomTimeMeanProposed_us','RandomTimeMeanCoverageOnly_us','RandomTimeP95Mpc_us','RandomTimeP95Proposed_us','RandomTimeP95CoverageOnly_us','RandomPhysicalViolationMpc','RandomPhysicalViolationProposed','RandomPhysicalViolationCoverageOnly','RandomCertifiedViolationMpc','RandomCertifiedViolationProposed','RandomCertifiedViolationCoverageOnly','RandomUncertifiedMpc','RandomUncertifiedProposed','RandomUncertifiedCoverageOnly','RandomBackupProposed','RandomBackupCoverageOnly'});
+reportRow = addvars(reportRow,representativeStatsEnd,randomStatsEnd,'After','Nc','NewVariableNames',{'RepresentativeDuration_s','RandomDuration_s'});
+
+R = struct;
+[R.Np,R.Nc] = deal(Np,Nc);
+[R.tRepresentative,R.tRandom] = deal(tRepresentative,tRandom);
+[R.representativeStatsEnd,R.randomStatsEnd] = deal(representativeStatsEnd,randomStatsEnd);
+[R.Xmpc,R.Xtrained,R.Xuntrained] = deal(Xmpc,Xtrained,Xuntrained);
+[R.Umpc,R.Utrained,R.Uuntrained] = deal(Umpc,Utrained,Uuntrained);
+[R.Uteacher,R.Uoracle] = deal(Uteacher,Uoracle);
+[R.Tmpc,R.Ttrained,R.Tuntrained] = deal(Tmpc*1e6,Ttrained*1e6,Tuntrained*1e6);
+[R.ResMpc,R.ResTrained,R.ResUntrained] = deal(ResMpc,ResTrained,ResUntrained);
+[R.CurrentResMpc,R.CurrentResTrained,R.CurrentResUntrained] = deal(CurrentResMpc,CurrentResTrained,CurrentResUntrained);
+[R.DomainResMpc,R.DomainResTrained,R.DomainResUntrained] = deal(DomainResMpc,DomainResTrained,DomainResUntrained);
+R.XiMultiInitial = XiMultiInitial;
+[R.XmultiMpc,R.XmultiTrained,R.XmultiUntrained] = deal(XmultiMpc,XmultiTrained,XmultiUntrained);
+[R.UmultiMpc,R.UmultiTrained,R.UmultiUntrained] = deal(UmultiMpc,UmultiTrained,UmultiUntrained);
+[R.TmultiMpc,R.TmultiTrained,R.TmultiUntrained] = deal(TmultiMpc*1e6,TmultiTrained*1e6,TmultiUntrained*1e6);
+[R.ResMultiMpc,R.ResMultiTrained,R.ResMultiUntrained] = deal(ResMultiMpc,ResMultiTrained,ResMultiUntrained);
+[R.CurrentResMultiMpc,R.CurrentResMultiTrained,R.CurrentResMultiUntrained] = deal(CurrentResMultiMpc,CurrentResMultiTrained,CurrentResMultiUntrained);
+[R.DomainResMultiMpc,R.DomainResMultiTrained,R.DomainResMultiUntrained] = deal(DomainResMultiMpc,DomainResMultiTrained,DomainResMultiUntrained);
+[R.NstepMultiMpc,R.NstepMultiTrained,R.NstepMultiUntrained] = deal(NstepMultiMpc,NstepMultiTrained,NstepMultiUntrained);
+[R.backupMultiTrained,R.backupMultiUntrained] = deal(backupMultiTrained,backupMultiUntrained);
+[R.JeMultiMpc,R.JeMultiTrained,R.JeMultiUntrained] = deal(JeMultiMpc,JeMultiTrained,JeMultiUntrained);
+[R.JeChangeMultiTrained,R.JeChangeMultiUntrained] = deal(JeChangeMultiTrained,JeChangeMultiUntrained);
+R.idCompleteTriple = idCompleteTriple;
+[R.closedStats,R.multiStats,R.reportStats,R.reportRow] = deal(closedStats,multiStats,reportStats,reportRow);
+
+end
+
+
+%% Representative MEX rollout
+
+function [X,U,T,Res,backupStats] = local_rollout_mex(xiInitial,Nsim,Nwarm,A,B,S,D,b,L_perf,L_cov)
+
+[nx,nu] = deal(size(A,1),size(B,2));
+[X,U,T] = deal(nan(nx,Nsim+1),nan(nu,Nsim),nan(1,Nsim));
+X(:,1) = xiInitial;
+executorMex = @certnnmpc_executor_mex;
+
+executorMex('reset');
+
+for k = 1:Nwarm
+    executorMex(xiInitial);
+end
+
+% Warm-up is only for loaded code/data and must not seed the measured rollout.
+executorMex('reset');
+executorMex('reset_stats');
+xi = xiInitial;
+
+for k = 1:Nsim
+    timerOnline = tic;
+    u = executorMex(xi);
+    T(k) = toc(timerOnline);
+    if any(~isfinite(u)), break, end
+    U(:,k) = u;
+    xi = A*xi+B*u;
+    X(:,k+1) = xi;
+end
+
+backupStats = executorMex('stats');
+Ndone = sum(all(isfinite(U),1));
+Res = local_executor_residual_replay(X,Ndone,S,D,b,L_perf,L_cov);
+
+end
+
+
+%% Random-start MEX rollouts
+
+function [X,U,T,Res,Ndone,backupCalls] = local_rollout_mex_batch(X0,Nsim,Nwarm,A,B,S,D,b,L_perf,L_cov)
+
+[nx,Ncase] = size(X0);
+nu = size(B,2);
+[X,U,T,Res] = deal(nan(nx,Nsim+1,Ncase),nan(nu,Nsim,Ncase),nan(Nsim,Ncase),nan(Nsim,Ncase));
+[Ndone,backupCalls] = deal(zeros(1,Ncase),zeros(1,Ncase));
+executorMex = @certnnmpc_executor_mex;
+
+for i = 1:Ncase
+    executorMex('reset');
+    for k = 1:Nwarm
+        executorMex(X0(:,i));
+    end
+    executorMex('reset');
+    executorMex('reset_stats');
+    xi = X0(:,i);
+    X(:,1,i) = xi;
+
+    for k = 1:Nsim
+        timerOnline = tic;
+        u = executorMex(xi);
+        T(k,i) = toc(timerOnline);
+        if any(~isfinite(u)), break, end
+        U(:,k,i) = u;
+        xi = A*xi+B*u;
+        X(:,k+1,i) = xi;
+        Ndone(i) = k;
+    end
+
+    stats = executorMex('stats');
+    backupCalls(i) = stats.backup_calls;
+end
+
+% Diagnostics are replayed after all measured controller calls.
+for i = 1:Ncase
+    Res(:,i) = local_executor_residual_replay(X(:,:,i),Ndone(i),S,D,b,L_perf,L_cov).';
+end
+
+end
+
+
+%% Random-start MPC rollouts
+
+function [X,U,T,Res,Ndone] = local_rollout_mpc_batch(X0,Nsim,Nwarm,A,B,kwikMex,resetInput,kwikQp,kwikOptions,S,D,b)
+
+[nx,Ncase] = size(X0);
+nu = size(B,2);
+[X,U,T,Res] = deal(nan(nx,Nsim+1,Ncase),nan(nu,Nsim,Ncase),nan(Nsim,Ncase),nan(Nsim,Ncase));
+Ndone = zeros(1,Ncase);
+
+for i = 1:Ncase
+    [Xi,Ui,Ti] = local_rollout_mpc_kwik(X0(:,i),Nsim,Nwarm,A,B,kwikMex,resetInput);
+    X(:,:,i) = Xi;
+    U(:,:,i) = Ui;
+    T(:,i) = Ti(:);
+    Ndone(i) = sum(all(isfinite(Ui),1));
+end
+
+% Full prediction output is requested only during untimed diagnostic replay.
+for i = 1:Ncase
+    Res(:,i) = local_mpc_residual_replay(X(:,:,i),U(:,:,i),Ndone(i),kwikQp,kwikOptions,S,D,b).';
+end
+
+end
+
+
+%% Condensed KWIK MPC MEX rollout
+
+function [X,U,T] = local_rollout_mpc_kwik(xiInitial,Nsim,Nwarm,A,B,kwikMex,resetInput)
+
+[nx,nu] = deal(size(A,1),size(B,2));
+
+% Untimed warm-up. Restore the active set before the measured rollout.
+kwikMex(resetInput);
+xi = xiInitial;
+
+for k = 1:Nwarm
+    u = kwikMex(xi);
+    xi = A*xi+B*u;
+end
+
+kwikMex(resetInput);
+[X,U,T] = deal(nan(nx,Nsim+1),nan(nu,Nsim),nan(1,Nsim));
+X(:,1) = xiInitial;
+xi = xiInitial;
+
+for k = 1:Nsim
+    timerOnline = tic;
+    u = kwikMex(xi);
+    T(k) = toc(timerOnline);
+    if any(~isfinite(u)), break, end
+    U(:,k) = u;
+    xi = A*xi+B*u;
+    X(:,k+1) = xi;
+end
+
+end
+
+
+function U = local_replay_mpc_actions(X,kwikMex,resetInput,nu)
+
+N = size(X,2);
+U = nan(nu,N);
+kwikMex(resetInput);
+
+for k = 1:N
+    xi = X(:,k);
+    if any(~isfinite(xi)), break, end
+    U(:,k) = kwikMex(xi);
+end
+
+end
+
+
+%% Untimed diagnostic replay
+
+function Res = local_mpc_residual_replay(X,U,Ndone,kwikQp,kwikOptions,S,D,b)
+
+Nsim = size(U,2);
+Res = nan(1,Nsim);
+iA = false(size(D,1),1);
+
+for k = 1:Ndone
+    xi = X(:,k);
+    [y,iA] = local_solve_lateral_kwik_qp(kwikQp,xi,iA,kwikOptions);
+    Res(k) = max(S*xi+D*y-b);
+end
+
+end
+
+
+function [U,iA,exitflag] = local_solve_lateral_kwik_qp(qp,xi,iA,options)
+
+f = qp.F*xi;
+bqp = qp.b-qp.S*xi;
+Aeq = zeros(0,qp.nU);
+beq = zeros(0,1);
+[U,exitflag,iAnew] = mpcActiveSetSolver(qp.Linv,f,qp.Ac,bqp,Aeq,beq,iA,options);
+
+if exitflag <= 0
+    [U,exitflag,iAnew] = mpcActiveSetSolver(qp.Linv,f,qp.Ac,bqp,Aeq,beq,false(size(iA)),options);
+end
+
+if exitflag > 0
+    iA = iAnew;
+else
+    iA(:) = false;
+    U(:) = nan;
+end
+
+end
+
+
+function Res = local_executor_residual_replay(X,Ndone,S,D,b,L_perf,L_cov)
+
+Nsim = size(X,2)-1;
+Res = nan(1,Nsim);
+executorMex = @certnnmpc_executor_mex;
+executorMex('reset');
+
+for k = 1:Ndone
+    xi = X(:,k);
+    [~,info] = executorMex(xi);
+    Res(k) = local_mex_lifted_residual(xi,info,S,D,b,L_perf,L_cov);
+end
+
+end
+
+
+%% Publication figures
+
+function positionInfo = local_plot_representative(outputDir,R,figFont)
+
+plotEnd = R.representativeStatsEnd;
+t = R.tRepresentative;
+[colorMpc,colorTrained,colorUntrained] = deal([0 0 0],[0.85 0 0],[0 0.25 0.85]);
+positionInfo = struct;
+
+% Manual adjustment interface for this figure (use [] to keep automatic limits/positions).
+plotAdjust.figureSize = [3.50 2.75];       % [width height], inches
+plotAdjust.tileSpacing = 'tight';          % minimal gaps between stacked panels
+plotAdjust.padding = 'compact';            % outer tiledlayout padding
+plotAdjust.xLim = [0 plotEnd];              % common x-axis range
+plotAdjust.stateYLim = [];                  % top-panel y-axis range
+plotAdjust.inputYLim = [-0.3 0.3];          % middle-panel y-axis range
+plotAdjust.timeYLim = [];                   % bottom-panel y-axis range
+plotAdjust.stateLegendLocation = 'northeast';
+plotAdjust.stateLegendPosition = [];        % normalized [left bottom width height]
+% plotAdjust.stateLegendPosition = [0.60 0.75 0.30 0.15]; %+++++++++++
+
+% IEEE single-column width: three compact representative panels in one column.
+
+fig = local_panel_figure(plotAdjust.figureSize(1),plotAdjust.figureSize(2));
+tl = tiledlayout(fig,3,1,'TileSpacing',plotAdjust.tileSpacing,'Padding',plotAdjust.padding);
+
+ax = nexttile(tl,1);
+plot(ax,t,R.Xmpc(1,1:end-1),'Color',colorMpc,'LineWidth',1.0)
+hold(ax,'on')
+plot(ax,t,R.Xtrained(1,1:end-1),'Color',colorTrained,'LineWidth',1.0)
+plot(ax,t,R.Xuntrained(1,1:end-1),'--','Color',colorUntrained,'LineWidth',1.0)
+local_format_axis(ax,figFont,plotAdjust.xLim,'Time (s)','$e_s$')
+xlabel(ax,[])
+set(ax,'XTickLabel',[])
+if ~isempty(plotAdjust.stateYLim), ylim(ax,plotAdjust.stateYLim), end
+hLegState = legend(ax,{'MPC (MEX)','Proposed','Coverage-only'},'Location',plotAdjust.stateLegendLocation,'FontSize',6,'Interpreter','latex');
+if ~isempty(plotAdjust.stateLegendPosition), set(hLegState,'Units','normalized','Position',plotAdjust.stateLegendPosition), end
+positionInfo.stateAxes = local_position_record(ax);
+positionInfo.stateLegend = local_position_record(hLegState);
+
+ax = nexttile(tl,2);
+plot(ax,t,R.Umpc,'Color',colorMpc,'LineWidth',1.0)
+hold(ax,'on')
+plot(ax,t,R.Utrained,'Color',colorTrained,'LineWidth',1.0)
+plot(ax,t,R.Uuntrained,'--','Color',colorUntrained,'LineWidth',1.0)
+local_format_axis(ax,figFont,plotAdjust.xLim,'Time (s)','$\delta$')
+xlabel(ax,[])
+set(ax,'XTickLabel',[])
+if ~isempty(plotAdjust.inputYLim), ylim(ax,plotAdjust.inputYLim), end
+
+ax = nexttile(tl,3);
+hTimeMpc = semilogy(ax,t,max(R.Tmpc,eps),'Color',colorMpc,'LineWidth',0.9);
+hold(ax,'on')
+hTimeTrained = semilogy(ax,t,max(R.Ttrained,eps),'Color',colorTrained,'LineWidth',0.9);
+hTimeUntrained = semilogy(ax,t,max(R.Tuntrained,eps),'--','Color',colorUntrained,'LineWidth',0.9);
+local_format_axis(ax,figFont,plotAdjust.xLim,'Time (s)','Time ($\mu$s)')
+if ~isempty(plotAdjust.timeYLim), ylim(ax,plotAdjust.timeYLim), end
+
+timeMean = [R.closedStats.time_mean_mpc,R.closedStats.time_mean_trained,R.closedStats.time_mean_untrained];
+timeMeanColor = {colorMpc,colorTrained,colorUntrained};
+timeMeanX = 0.68*plotEnd;
+
+for iMethod = 1:3
+    timeMeanText = sprintf('$t_{\\mathrm{mean}}=%.1f\\,\\mu\\mathrm{s}$',timeMean(iMethod));
+    hTimeMeanLabel(iMethod) = text(ax,timeMeanX,1.45*timeMean(iMethod),timeMeanText,'Color',timeMeanColor{iMethod},'FontName','Times New Roman','FontSize',8,'Interpreter','latex','HorizontalAlignment','center','VerticalAlignment','bottom');
+    if iMethod==1, set(hTimeMeanLabel(iMethod),'Position',[timeMeanX 80 0]);end %+++++++++++
+    if iMethod==2, set(hTimeMeanLabel(iMethod),'Position',[timeMeanX 7 0]);end %+++++++++++
+    if iMethod==3, set(hTimeMeanLabel(iMethod),'Position',[timeMeanX 1.8 0]);end %+++++++++++
+    positionInfo.timeMeanLabel(iMethod) = local_position_record(hTimeMeanLabel(iMethod));
+end
+positionInfo.timeAxes = local_position_record(ax);
+
+local_export_panel(fig,outputDir,sprintf('lateral_representative_Np%d',R.Np))
+
+end
+
+
+function positionInfo = local_plot_random_start(outputDir,R,figFont)
+
+plotEnd = R.randomStatsEnd;
+tPlot = R.tRandom;
+id = true(size(tPlot));
+cases = R.idCompleteTriple;
+Empc = reshape(abs(R.XmultiMpc(1,id,cases)),nnz(id),[]);
+Etrained = reshape(abs(R.XmultiTrained(1,id,cases)),nnz(id),[]);
+Euntrained = reshape(abs(R.XmultiUntrained(1,id,cases)),nnz(id),[]);
+
+[colorMpc,colorTrained,colorUntrained] = deal([0.18 0.18 0.18],[0.85 0 0],[0 0.25 0.85]);
+positionInfo = struct;
+
+% Manual adjustment interface for these figures (use [] to keep automatic values).
+plotAdjust.figureSize = [2.30 1.55];        % [width height], inches; shared by Figures 2--7
+plotAdjust.axesPosition = [0.20 0.23 0.76 0.72]; % normalized [left bottom width height]
+plotAdjust.xLim = [0 plotEnd];              % x-axis range
+plotAdjust.yLim = [];                       % [] uses the data-dependent range below
+plotAdjust.legendLocation = 'northeast';
+plotAdjust.legendPosition = [];             % normalized [left bottom width height]
+% plotAdjust.legendPosition = [0.60 0.75 0.30 0.15]; %+++++++++++
+
+
+% IEEE double-column width: (7.10-2*0.10)/3 = 2.30 in per panel.
+fig = local_panel_figure(plotAdjust.figureSize(1),plotAdjust.figureSize(2));
+ax = axes(fig,'Position',plotAdjust.axesPosition);
+hold(ax,'on')
+local_quantile_band(ax,tPlot,Empc,colorMpc,'-')
+local_quantile_band(ax,tPlot,Etrained,colorTrained,'-')
+local_quantile_band(ax,tPlot,Euntrained,colorUntrained,'--')
+local_format_axis(ax,figFont,plotAdjust.xLim,'Time (s)','$|e_s|$')
+if isempty(plotAdjust.yLim)
+    ylim(ax,[0 1.05*max([Empc;Etrained;Euntrained],[],'all','omitnan')])
+else
+    ylim(ax,plotAdjust.yLim)
+end
+
+positionInfo.axes = local_position_record(ax);
+if R.Np == 15
+    hLeg = legend(ax,{'MPC (MEX)','Proposed','Coverage-only'},'Location',plotAdjust.legendLocation,'FontSize',5.5,'Interpreter','latex');
+    if ~isempty(plotAdjust.legendPosition), set(hLeg,'Units','normalized','Position',plotAdjust.legendPosition), end
+    positionInfo.legend = local_position_record(hLeg);
+end
+local_export_panel(fig,outputDir,sprintf('lateral_random_error_Np%d',R.Np))
+
+end
+
+
+function positionInfo = local_plot_horizon_summary(outputDir,result,horizons,figFont)
+
+nHorizon = numel(horizons);
+[deltaMedian,deltaQ25,deltaQ75,timeMean,timeP95] = deal(zeros(2,nHorizon),zeros(2,nHorizon),zeros(2,nHorizon),zeros(3,nHorizon),zeros(3,nHorizon));
+[nCov,nPerf] = deal(zeros(1,nHorizon),zeros(1,nHorizon));
+
+for i = 1:nHorizon
+    trained = result{i}.JeChangeMultiTrained;
+    untrained = result{i}.JeChangeMultiUntrained;
+    trained = trained(isfinite(trained));
+    untrained = untrained(isfinite(untrained));
+    deltaMedian(:,i) = [median(trained,'omitnan');median(untrained,'omitnan')];
+    deltaQ25(:,i) = [prctile(trained,25);prctile(untrained,25)];
+    deltaQ75(:,i) = [prctile(trained,75);prctile(untrained,75)];
+    s = result{i}.multiStats;
+    timeMean(:,i) = [s.time_mean_mpc;s.time_mean_trained;s.time_mean_untrained];
+    timeP95(:,i) = [s.time_p95_mpc;s.time_p95_trained;s.time_p95_untrained];
+    nCov(i) = result{i}.reportStats.library.coverage_laws_reduced;
+    nPerf(i) = result{i}.reportStats.library.performance_laws;
+end
+
+[colorMpc,colorTrained,colorUntrained] = deal([0.18 0.18 0.18],[0.85 0 0],[0 0.25 0.85]);
+summaryFigureSize = [2.30 1.55];            % match the three random-start panels
+positionInfo = struct;
+
+% Keep the full figure the same size as the other horizon-summary panels,
+% but separate the two very different Delta J_e scales into close subplots.
+fig = local_panel_figure(summaryFigureSize(1),summaryFigureSize(2));
+tl = tiledlayout(fig,1,2,'TileSpacing','compact','Padding','compact');
+
+for iMethod = 1:2
+    ax = nexttile(tl,iMethod);
+    hold(ax,'on')
+    if iMethod == 1
+        errorbar(ax,horizons,deltaMedian(1,:),deltaMedian(1,:)-deltaQ25(1,:),deltaQ75(1,:)-deltaMedian(1,:),'o-','Color',colorTrained,'MarkerFaceColor',colorTrained,'LineWidth',1.0,'MarkerSize',4)
+        methodTitle = 'Proposed';
+        methodColor = colorTrained;
+    else
+        errorbar(ax,horizons,deltaMedian(2,:),deltaMedian(2,:)-deltaQ25(2,:),deltaQ75(2,:)-deltaMedian(2,:),'o--','Color',colorUntrained,'MarkerFaceColor','w','LineWidth',1.0,'MarkerSize',4)
+        methodTitle = 'Coverage-only';
+        methodColor = colorUntrained;
+    end
+    if iMethod == 1
+        yLabel = '$\Delta J_e$ (\%)';
+    else
+        yLabel = '';
+    end
+    local_format_axis(ax,figFont,[12 69],'$N_p$',yLabel)
+    xticks(ax,horizons)
+    hMethodTitle(iMethod) = text(ax,0.50,0.97,methodTitle,'Units','normalized','Color',methodColor,'FontSize',figFont-1.5,'FontWeight','normal','HorizontalAlignment','center','VerticalAlignment','top');
+    % set(hMethodTitle(iMethod),'Units','normalized','Position',[0.50 0.97 0]); %+++++++++++
+    ylimDelta = ylim(ax);
+    spanDelta = diff(ylimDelta);
+    ylim(ax,[ylimDelta(1)-0.04*spanDelta ylimDelta(2)+0.14*spanDelta])
+    positionInfo.figure5.method(iMethod).axes = local_position_record(ax);
+    positionInfo.figure5.method(iMethod).title = local_position_record(hMethodTitle(iMethod));
+end
+local_export_panel(fig,outputDir,'lateral_horizon_delta_Je')
+
+fig = local_panel_figure(summaryFigureSize(1),summaryFigureSize(2));
+ax = axes(fig,'Position',[0.23 0.24 0.73 0.70]);
+hold(ax,'on')
+errorbar(ax,horizons,timeMean(1,:),zeros(1,nHorizon),max(timeP95(1,:)-timeMean(1,:),0),'s-','Color',colorMpc,'MarkerFaceColor','w','LineWidth',1.0,'MarkerSize',4)
+errorbar(ax,horizons,timeMean(2,:),zeros(1,nHorizon),max(timeP95(2,:)-timeMean(2,:),0),'o-','Color',colorTrained,'MarkerFaceColor',colorTrained,'LineWidth',1.0,'MarkerSize',4)
+errorbar(ax,horizons,timeMean(3,:),zeros(1,nHorizon),max(timeP95(3,:)-timeMean(3,:),0),'o--','Color',colorUntrained,'MarkerFaceColor','w','LineWidth',1.0,'MarkerSize',4)
+set(ax,'YScale','log')
+local_format_axis(ax,figFont,[12 69],'$N_p$','Execution time ($\mu$s)')
+xticks(ax,horizons)
+ylimTime = ylim(ax);
+ylim(ax,[ylimTime(1)/1.2 max(ylimTime(2),1.5*max(timeMean,[],'all'))])
+
+timeLabelX = horizons+[1.2 -1.2 -1.2];
+timeLabelAlign = {'left','right','right'};
+for i = 1:nHorizon
+    hTimeLabel(1,i) = text(ax,timeLabelX(i),0.82*timeMean(1,i),sprintf('%.1f',timeMean(1,i)),'Color',colorMpc,'FontSize',figFont-1,'HorizontalAlignment',timeLabelAlign{i},'VerticalAlignment','top');
+    hTimeLabel(2,i) = text(ax,timeLabelX(i),1.14*timeMean(2,i),sprintf('%.1f',timeMean(2,i)),'Color',colorTrained,'FontSize',figFont-1,'HorizontalAlignment',timeLabelAlign{i},'VerticalAlignment','bottom');
+    hTimeLabel(3,i) = text(ax,timeLabelX(i),1.14*timeMean(3,i),sprintf('%.1f',timeMean(3,i)),'Color',colorUntrained,'FontSize',figFont-1,'HorizontalAlignment',timeLabelAlign{i},'VerticalAlignment','bottom');
+    if i==3, set(hTimeLabel(1,i),'Position',[timeLabelX(i) 1 0]);end %+++++++++++
+end
+
+positionInfo.figure6.axes = local_position_record(ax);
+for iMethod = 1:3
+    for i = 1:nHorizon
+        positionInfo.figure6.method(iMethod).valueLabel(i) = local_position_record(hTimeLabel(iMethod,i));
+    end
+end
+local_export_panel(fig,outputDir,'lateral_horizon_time')
+
+fig = local_panel_figure(summaryFigureSize(1),summaryFigureSize(2));
+ax = axes(fig,'Position',[0.23 0.24 0.73 0.70]);
+colorLawCoverage = [0.00 0.50 0.35];
+colorLawPerformance = [0.90 0.45 0.00];
+% colorLawCoverage = [0.00 0.50 0.35]; colorLawPerformance = [0.90 0.45 0.00]; %+++++++++++
+
+plot(ax,horizons,nCov,'s-','Color',colorLawCoverage,'MarkerFaceColor','w','LineWidth',1.0,'MarkerSize',4)
+hold(ax,'on')
+plot(ax,horizons,nPerf,'o-','Color',colorLawPerformance,'MarkerFaceColor',colorLawPerformance,'LineWidth',1.0,'MarkerSize',4)
+local_format_axis(ax,figFont,[12 69],'$N_p$','Number of laws')
+xticks(ax,horizons)
+lawScale = max([nCov nPerf],[],'all');
+lawLabelOffset = 0.035*lawScale;
+ylim(ax,[0 1.12*lawScale])
+
+lawLabelX = horizons+[1.2 0 -1.2];
+lawLabelAlign = {'left','center','right'};
+lawCovLabelY = nCov+lawLabelOffset;
+lawPerfLabelY = max(nPerf-lawLabelOffset,0);
+for i = 1:nHorizon
+    hLawLabel(1,i) = text(ax,lawLabelX(i),lawCovLabelY(i),sprintf('%.0f',nCov(i)),'Color',colorLawCoverage,'FontSize',figFont-1,'HorizontalAlignment',lawLabelAlign{i},'VerticalAlignment','bottom');
+    hLawLabel(2,i) = text(ax,lawLabelX(i),lawPerfLabelY(i),sprintf('%.0f',nPerf(i)),'Color',colorLawPerformance,'FontSize',figFont-1,'HorizontalAlignment',lawLabelAlign{i},'VerticalAlignment','top');
+    % set(hLawLabel(:,i),'Position',[lawLabelX(i) 1 0]); %+++++++++++
+end
+
+hLegLaw = legend(ax,{'$|\mathcal L_{\mathrm{cov}}|$','$|\mathcal L_{\mathrm{perf}}|$'},'Location','northeast','FontSize',5.5,'Interpreter','latex');
+set(hLegLaw,'ItemTokenSize',[12 8])
+% set(hLegLaw,'Units','normalized','Position',[0.60 0.75 0.30 0.15]); %+++++++++++
+positionInfo.figure7.axes = local_position_record(ax);
+positionInfo.figure7.legend = local_position_record(hLegLaw);
+for iType = 1:2
+    for i = 1:nHorizon
+        positionInfo.figure7.type(iType).valueLabel(i) = local_position_record(hLawLabel(iType,i));
+    end
+end
+local_export_panel(fig,outputDir,'lateral_horizon_law_count')
+
+end
+
+
+%% Plot utilities
+
+function local_quantile_band(ax,t,E,color,lineStyle)
+
+q10 = prctile(E,10,2);
+q90 = prctile(E,90,2);
+medianE = median(E,2,'omitnan');
+fill(ax,[t fliplr(t)],[q10' fliplr(q90')],color,'FaceAlpha',0.12,'EdgeColor','none','HandleVisibility','off')
+plot(ax,t,medianE,'LineStyle',lineStyle,'Color',color,'LineWidth',1.15)
+
+end
+
+
+function fig = local_panel_figure(width,height)
+
+fig = figure('Color','w','Units','inches','Position',[0.5 0.5 width height],'PaperPositionMode','auto');
+
+end
+
+
+function local_format_axis(ax,figFont,xLim,xLabel,yLabel)
+
+xlim(ax,xLim)
+xlabel(ax,xLabel,'Interpreter','latex')
+ylabel(ax,yLabel,'Interpreter','latex')
+set(ax,'FontSize',figFont,'TickLabelInterpreter','latex')
+grid(ax,'on')
+box(ax,'on')
+
+end
+
+
+function info = local_position_record(h)
+
+drawnow
+info.units = get(h,'Units');
+info.position = get(h,'Position');
+
+end
+
+
+function local_export_panel(fig,outputDir,fileStem)
+
+drawnow
+exportgraphics(fig,fullfile(outputDir,[fileStem '.pdf']),'ContentType','vector')
+exportgraphics(fig,fullfile(outputDir,[fileStem '.png']),'Resolution',600)
+
+end
+
+
+%% Constraint and library utilities
+
+function residual = local_mex_lifted_residual(xi,info,S,D,b,L_perf,L_cov)
+
+nCandidate = numel(info.candidate_id);
+
+if nCandidate == 0 || isempty(info.lambda)
+    residual = nan;
+    return
+end
+
+Ycandidate = zeros(size(D,2),nCandidate);
+
+for j = 1:nCandidate
+    id = double(info.candidate_id(j));
+    if id <= numel(L_perf)
+        Ycandidate(:,j) = L_perf(id).F*xi+L_perf(id).f;
+    else
+        idCoverage = id-numel(L_perf);
+        Ycandidate(:,j) = L_cov(idCoverage).F*xi+L_cov(idCoverage).f;
+    end
+end
+
+residual = max(S*xi+D*(Ycandidate*info.lambda(:))-b);
+
+end
+
+
+function residual = local_current_output_residual(X,U,Cy,Dy,yMax)
+
+[Nstep,Ncase] = deal(size(U,2),size(U,3));
+residual = nan(Nstep,Ncase);
+yMax = yMax(:);
+
+for i = 1:Ncase
+    for k = 1:Nstep
+        [xi,u] = deal(X(:,k,i),U(:,k,i));
+        if all(isfinite(xi)) && all(isfinite(u))
+            y = Cy*xi+Dy*u;
+            residual(k,i) = max([y-yMax;-y-yMax]);
+        end
+    end
+end
+
+end
+
+
+function residual = local_domain_residual(X,U,B0,d0)
+
+[Nstep,Ncase] = deal(size(U,2),size(U,3));
+residual = nan(Nstep,Ncase);
+d0 = d0(:);
+
+for i = 1:Ncase
+    for k = 1:Nstep
+        [xi,u] = deal(X(:,k,i),U(:,k,i));
+        if all(isfinite(xi)) && all(isfinite(u))
+            residual(k,i) = max(B0*xi-d0);
+        end
+    end
+end
+
+end
+
+
+function value = local_max_or_nan(x)
+
+x = x(isfinite(x));
+
+if isempty(x)
+    value = nan;
+else
+    value = max(x);
+end
+
+end
+
+
+%% Console and unified file report
+
+function local_report_lateral(reportStats,initialSampleStats)
+
+[problem,network,library,offline] = deal(reportStats.problem,reportStats.network,reportStats.library,reportStats.offline);
+[closedStats,multiStats] = deal(reportStats.closed_loop,reportStats.random_start);
+
+fprintf('\n==========================================================================\n')
+fprintf('Lateral controller report: Np=%d, Nc=%d\n',problem.Np,problem.Nc)
+fprintf('==========================================================================\n')
+
+fprintf('\nProblem size\n')
+fprintf('State / input / future-input dimensions       : %d / %d / %d\n',problem.n_xi,problem.n_u,problem.n_w)
+fprintf('Original MPC / start-cell constraints          : %d / %d\n',problem.n_constraint,problem.n_domain_constraint)
+
+fprintf('\nNeural network and data\n')
+fprintf('Architecture                                  : %s\n',network.architecture)
+fprintf('Input / output dimensions                     : %d / %d\n',network.input_dim,network.output_dim)
+fprintf('Hidden layers                                 : %s\n',mat2str(network.hidden))
+fprintf('Trainable parameters                          : %d\n',network.trainable_parameters)
+fprintf('Dataset / training / validation samples       : %d / %d / %d\n',network.training_dataset_samples,network.training_samples,network.validation_samples)
+fprintf('Network training time                         : %.3f s\n',offline.network_training_s)
+
+fprintf('\nCertified libraries\n')
+fprintf('Performance laws                              : %d\n',library.performance_laws)
+fprintf('Coverage laws raw / reduced / removed         : %d / %d / %d\n',library.coverage_laws_raw,library.coverage_laws_reduced,library.coverage_laws_removed)
+fprintf('Coverage reduction ratio                      : %.2f %%\n',100*library.coverage_reduction_ratio)
+fprintf('Total deployed laws                           : %d\n',library.total_deployed_laws)
+if isfield(reportStats,'coverage')
+    fprintf('Coverage iterations / max depth / max level   : %d / %d / %d\n',reportStats.coverage.iter,reportStats.coverage.max_tree_depth,reportStats.coverage.max_level)
+end
+
+fprintf('\nOffline construction time\n')
+fprintf('Performance library                           : %.3f s\n',offline.performance_library_s)
+fprintf('Coverage construction                         : %.3f s\n',offline.coverage_construction_s)
+fprintf('Coverage reduction                            : %.3f s\n',offline.coverage_reduction_s)
+fprintf('Library compilation total                     : %.3f s\n',offline.library_compilation_s)
+fprintf('Network training                              : %.3f s\n',offline.network_training_s)
+fprintf('Complete offline total                        : %.3f s\n',offline.total_s)
+
+fprintf('\nCommon random initial-state sampling\n')
+fprintf('Accepted / proposed                           : %d / %d\n',initialSampleStats.accepted,initialSampleStats.proposed)
+fprintf('Acceptance rate / feasibility tolerance       : %.2f %% / %.3e\n',100*initialSampleStats.acceptance_rate,initialSampleStats.tolerance)
+
+if isfield(reportStats,'timing_standard')
+    timing = reportStats.timing_standard;
+    fprintf('\nOnline timing standard\n')
+    fprintf('Measured scope                                : %s\n',timing.scope)
+    fprintf('Timer                                         : %s\n',timing.timer)
+    fprintf('MPC preparation included / MEX call timed     : %s / %s\n',local_yes_no(timing.mpc_input_preparation_included),local_yes_no(timing.mex_marshalling_included))
+    fprintf('Plant propagation included                    : %s\n',local_yes_no(timing.plant_propagation_included))
+    fprintf('Timed MPC outputs                             : %s\n',timing.mpc_timed_outputs)
+    fprintf('Timed C-MEX outputs                           : %s\n',timing.executor_timed_outputs)
+    fprintf('Diagnostic outputs timed                      : %s\n',local_yes_no(timing.diagnostic_outputs_timed))
+    fprintf('Constraint diagnostics                        : %s\n',timing.diagnostic_replay)
+    fprintf('Warm-up calls / logical-state reset afterward : %d / %s\n',timing.warmup_calls,local_yes_no(timing.logical_state_reset_after_warmup))
+end
+
+fprintf('\nRepresentative closed loop (%.2f s)\n',closedStats.duration_s)
+fprintf('Executed MPC / Proposed / Coverage-only       : %d / %d / %d\n',closedStats.Nmpc,closedStats.Ntrained,closedStats.Nuntrained)
+fprintf('Je MPC / Proposed / Coverage-only             : %.6e / %.6e / %.6e\n',closedStats.Je_mpc,closedStats.Je_trained,closedStats.Je_untrained)
+fprintf('Je change vs MPC Proposed / Coverage-only     : %.2f %% / %.2f %%\n',closedStats.Je_change_trained_percent,closedStats.Je_change_untrained_percent)
+fprintf('Error RMS MPC / Proposed / Coverage-only      : %.3e / %.3e / %.3e\n',closedStats.e_rms_mpc,closedStats.e_rms_trained,closedStats.e_rms_untrained)
+fprintf('Max |error| MPC / Proposed / Coverage-only    : %.3e / %.3e / %.3e\n',closedStats.e_max_mpc,closedStats.e_max_trained,closedStats.e_max_untrained)
+fprintf('Input RMS MPC / Proposed / Coverage-only      : %.3e / %.3e / %.3e\n',closedStats.delta_rms_mpc,closedStats.delta_rms_trained,closedStats.delta_rms_untrained)
+fprintf('Max |input| MPC / Proposed / Coverage-only    : %.3e / %.3e / %.3e\n',closedStats.delta_max_mpc,closedStats.delta_max_trained,closedStats.delta_max_untrained)
+fprintf('Backup calls Proposed / Coverage-only         : %d / %d\n',closedStats.backup_calls_trained,closedStats.backup_calls_untrained)
+fprintf('Backup rate Proposed / Coverage-only          : %.4f %% / %.4f %%\n',100*closedStats.backup_rate_trained,100*closedStats.backup_rate_untrained)
+
+fprintf('\nRepresentative reference-policy recovery (mean / RMS / max)\n')
+fprintf('Same-state action error                       : %.3e / %.3e / %.3e\n',closedStats.same_state_mean,closedStats.same_state_rms,closedStats.same_state_max)
+fprintf('Own-state action error                        : %.3e / %.3e / %.3e\n',closedStats.own_state_mean,closedStats.own_state_rms,closedStats.own_state_max)
+fprintf('Free-rollout input difference                 : %.3e / %.3e / %.3e\n',closedStats.free_rollout_mean,closedStats.free_rollout_rms,closedStats.free_rollout_max)
+fprintf('Normalized state error                        : %.3e / %.3e / %.3e\n',closedStats.state_error_mean,closedStats.state_error_rms,closedStats.state_error_max)
+
+fprintf('\nConstraint-violation standards\n')
+fprintf('Tolerance                                     : %.3e\n',reportStats.violation_standard.tolerance)
+fprintf('Physical/current-output residual              : max([Cy*xi+Dy*u-yMax; -Cy*xi-Dy*u-yMax])\n')
+fprintf('Original MPC horizon residual                 : max(S*xi+D*U-b)\n')
+fprintf('Start-cell domain residual                    : max(B0*xi-d0)\n')
+
+fprintf('\nRepresentative physical/current-output constraints\n')
+fprintf('Max residual MPC / Proposed / Coverage-only   : %.3e / %.3e / %.3e\n',closedStats.current_output_max_residual_mpc,closedStats.current_output_max_residual_trained,closedStats.current_output_max_residual_untrained)
+fprintf('Max violation MPC / Proposed / Coverage-only  : %.3e / %.3e / %.3e\n',closedStats.current_output_max_violation_mpc,closedStats.current_output_max_violation_trained,closedStats.current_output_max_violation_untrained)
+fprintf('Violating steps MPC / Proposed / Coverage-only: %d / %d / %d\n',closedStats.current_output_violation_mpc,closedStats.current_output_violation_trained,closedStats.current_output_violation_untrained)
+
+fprintf('\nRepresentative original-MPC horizon certification\n')
+fprintf('Certified queries MPC / Proposed / Coverage-only  : %d / %d / %d\n',closedStats.horizon_certified_mpc,closedStats.horizon_certified_trained,closedStats.horizon_certified_untrained)
+fprintf('Uncertified queries MPC / Proposed / Coverage-only: %d / %d / %d\n',closedStats.horizon_uncertified_mpc,closedStats.horizon_uncertified_trained,closedStats.horizon_uncertified_untrained)
+fprintf('Max residual MPC / Proposed / Coverage-only       : %.3e / %.3e / %.3e\n',closedStats.max_residual_mpc,closedStats.max_residual_trained,closedStats.max_residual_untrained)
+fprintf('Max violation MPC / Proposed / Coverage-only      : %.3e / %.3e / %.3e\n',closedStats.max_violation_mpc,closedStats.max_violation_trained,closedStats.max_violation_untrained)
+fprintf('Violating queries MPC / Proposed / Coverage-only  : %d / %d / %d\n',closedStats.violation_mpc,closedStats.violation_trained,closedStats.violation_untrained)
+
+fprintf('\nRepresentative start-cell operating domain\n')
+fprintf('Max domain residual MPC / Proposed / Coverage-only: %.3e / %.3e / %.3e\n',closedStats.domain_max_residual_mpc,closedStats.domain_max_residual_trained,closedStats.domain_max_residual_untrained)
+fprintf('Outside-domain steps MPC / Proposed / Coverage-only   : %d / %d / %d\n',closedStats.domain_exit_mpc,closedStats.domain_exit_trained,closedStats.domain_exit_untrained)
+
+fprintf('\nRepresentative execution time (us; mean / p95 / p99 / max)\n')
+fprintf('MPC                                           : %.3f / %.3f / %.3f / %.3f\n',closedStats.time_mean_mpc,closedStats.time_p95_mpc,closedStats.time_p99_mpc,closedStats.time_max_mpc)
+fprintf('Proposed C-MEX                                : %.3f / %.3f / %.3f / %.3f\n',closedStats.time_mean_trained,closedStats.time_p95_trained,closedStats.time_p99_trained,closedStats.time_max_trained)
+fprintf('Coverage-only C-MEX                           : %.3f / %.3f / %.3f / %.3f\n',closedStats.time_mean_untrained,closedStats.time_p95_untrained,closedStats.time_p99_untrained,closedStats.time_max_untrained)
+
+fprintf('\nRandom-start evaluation (%.2f s per trajectory)\n',multiStats.duration_s)
+fprintf('Starts / completed MPC / Proposed / Coverage-only: %d / %d / %d / %d\n',multiStats.Nstart,multiStats.completed_mpc,multiStats.completed_trained,multiStats.completed_untrained)
+fprintf('Executed queries MPC / Proposed / Coverage-only  : %d / %d / %d\n',multiStats.executed_queries_mpc,multiStats.executed_queries_trained,multiStats.executed_queries_untrained)
+fprintf('Je mean MPC / Proposed / Coverage-only          : %.6e / %.6e / %.6e\n',multiStats.Je_mean_mpc,multiStats.Je_mean_trained,multiStats.Je_mean_untrained)
+fprintf('Je median MPC / Proposed / Coverage-only        : %.6e / %.6e / %.6e\n',multiStats.Je_median_mpc,multiStats.Je_median_trained,multiStats.Je_median_untrained)
+fprintf('Je p90 MPC / Proposed / Coverage-only           : %.6e / %.6e / %.6e\n',multiStats.Je_p90_mpc,multiStats.Je_p90_trained,multiStats.Je_p90_untrained)
+fprintf('Je p99 MPC / Proposed / Coverage-only           : %.6e / %.6e / %.6e\n',multiStats.Je_p99_mpc,multiStats.Je_p99_trained,multiStats.Je_p99_untrained)
+fprintf('Je max MPC / Proposed / Coverage-only           : %.6e / %.6e / %.6e\n',multiStats.Je_max_mpc,multiStats.Je_max_trained,multiStats.Je_max_untrained)
+fprintf('Median Je change vs MPC Proposed / Coverage-only: %.2f %% / %.2f %%\n',multiStats.Je_change_median_trained,multiStats.Je_change_median_untrained)
+fprintf('Proposed vs Coverage-only improved / equal / degraded: %d / %d / %d\n',multiStats.better_count,multiStats.unchanged_count,multiStats.degraded_count)
+fprintf('Paired Je reduction mean / median / min / max   : %.6e / %.6e / %.6e / %.6e\n',multiStats.Je_delta_mean,multiStats.Je_delta_median,multiStats.Je_delta_min,multiStats.Je_delta_max)
+fprintf('Paired relative reduction mean / median          : %.2f %% / %.2f %%\n',100*multiStats.Je_rel_improve_mean,100*multiStats.Je_rel_improve_median)
+fprintf('Worst |error| MPC / Proposed / Coverage-only    : %.3e / %.3e / %.3e\n',multiStats.max_abs_error_mpc,multiStats.max_abs_error_trained,multiStats.max_abs_error_untrained)
+
+fprintf('\nRandom-start physical/current-output constraints\n')
+fprintf('Max residual MPC / Proposed / Coverage-only     : %.3e / %.3e / %.3e\n',multiStats.current_output_max_residual_mpc,multiStats.current_output_max_residual_trained,multiStats.current_output_max_residual_untrained)
+fprintf('Max violation MPC / Proposed / Coverage-only    : %.3e / %.3e / %.3e\n',multiStats.current_output_max_violation_mpc,multiStats.current_output_max_violation_trained,multiStats.current_output_max_violation_untrained)
+fprintf('Violating steps MPC / Proposed / Coverage-only  : %d / %d / %d\n',multiStats.current_output_violation_mpc,multiStats.current_output_violation_trained,multiStats.current_output_violation_untrained)
+fprintf('Violation rate MPC / Proposed / Coverage-only   : %.3e / %.3e / %.3e\n',multiStats.current_output_violation_rate_mpc,multiStats.current_output_violation_rate_trained,multiStats.current_output_violation_rate_untrained)
+fprintf('Trajectory violation rate MPC / Proposed / Coverage-only: %.3e / %.3e / %.3e\n',multiStats.current_output_trajectory_violation_rate_mpc,multiStats.current_output_trajectory_violation_rate_trained,multiStats.current_output_trajectory_violation_rate_untrained)
+
+fprintf('\nRandom-start original-MPC horizon certification\n')
+fprintf('Certified queries MPC / Proposed / Coverage-only  : %d / %d / %d\n',multiStats.query_mpc,multiStats.query_trained,multiStats.query_untrained)
+fprintf('Uncertified queries MPC / Proposed / Coverage-only: %d / %d / %d\n',multiStats.horizon_uncertified_mpc,multiStats.horizon_uncertified_trained,multiStats.horizon_uncertified_untrained)
+fprintf('Max residual MPC / Proposed / Coverage-only       : %.3e / %.3e / %.3e\n',multiStats.max_residual_mpc,multiStats.max_residual_trained,multiStats.max_residual_untrained)
+fprintf('Max violation MPC / Proposed / Coverage-only      : %.3e / %.3e / %.3e\n',multiStats.max_violation_mpc,multiStats.max_violation_trained,multiStats.max_violation_untrained)
+fprintf('Violating queries MPC / Proposed / Coverage-only  : %d / %d / %d\n',multiStats.violation_mpc,multiStats.violation_trained,multiStats.violation_untrained)
+fprintf('Violation rate MPC / Proposed / Coverage-only     : %.3e / %.3e / %.3e\n',multiStats.violation_rate_mpc,multiStats.violation_rate_trained,multiStats.violation_rate_untrained)
+fprintf('Trajectory violation rate MPC / Proposed / Coverage-only: %.3e / %.3e / %.3e\n',multiStats.trajectory_violation_rate_mpc,multiStats.trajectory_violation_rate_trained,multiStats.trajectory_violation_rate_untrained)
+
+fprintf('\nRandom-start start-cell operating domain\n')
+fprintf('Max domain residual MPC / Proposed / Coverage-only: %.3e / %.3e / %.3e\n',multiStats.domain_max_residual_mpc,multiStats.domain_max_residual_trained,multiStats.domain_max_residual_untrained)
+fprintf('Outside-domain steps MPC / Proposed / Coverage-only   : %d / %d / %d\n',multiStats.domain_exit_mpc,multiStats.domain_exit_trained,multiStats.domain_exit_untrained)
+fprintf('Outside-domain rate MPC / Proposed / Coverage-only    : %.3e / %.3e / %.3e\n',multiStats.domain_exit_rate_mpc,multiStats.domain_exit_rate_trained,multiStats.domain_exit_rate_untrained)
+
+fprintf('\nRandom-start execution time (us; mean / p95 / p99 / max)\n')
+fprintf('MPC                                           : %.3f / %.3f / %.3f / %.3f\n',multiStats.time_mean_mpc,multiStats.time_p95_mpc,multiStats.time_p99_mpc,multiStats.time_max_mpc)
+fprintf('Proposed C-MEX                                : %.3f / %.3f / %.3f / %.3f\n',multiStats.time_mean_trained,multiStats.time_p95_trained,multiStats.time_p99_trained,multiStats.time_max_trained)
+fprintf('Coverage-only C-MEX                           : %.3f / %.3f / %.3f / %.3f\n',multiStats.time_mean_untrained,multiStats.time_p95_untrained,multiStats.time_p99_untrained,multiStats.time_max_untrained)
+fprintf('Backup calls Proposed / Coverage-only         : %d / %d\n',multiStats.backup_calls_trained,multiStats.backup_calls_untrained)
+fprintf('Backup rate Proposed / Coverage-only          : %.4f %% / %.4f %%\n',100*multiStats.backup_rate_trained,100*multiStats.backup_rate_untrained)
+fprintf('==========================================================================\n')
+
+end
+
+
+function text = local_yes_no(value)
+
+if value
+    text = 'yes';
+else
+    text = 'no';
+end
+
+end
