@@ -24,8 +24,10 @@ Simulation and evaluation code for the lateral-vehicle benchmark of certified da
 
 ## Comparison fairness
 
-Both controllers are evaluated as compiled MEX implementations under identical closed-loop conditions, including the vehicle model, constraints, sampling time, prediction horizon, initial states, and simulation duration. The reference MPC is used without retuning.
+Both controllers are evaluated as compiled MEX implementations within the same MATLAB closed-loop simulation environment. They use the same vehicle model, hard constraints, sampling time, prediction horizon, initial conditions, and simulation duration. The reference MPC is used without retuning.
 
-The reference MPC solves a condensed QP using the **`mpcActiveSetSolver` active-set solver from the MATLAB Model Predictive Control Toolbox** and is compiled with MATLAB Coder. The proposed controller is implemented as C-MEX. The compiled reference is denoted **MPC (MEX)**.
+The reference controller is formulated as a condensed quadratic program, solved using the active-set solver from the MATLAB Model Predictive Control Toolbox, and compiled into MEX using MATLAB Coder. The proposed controller is deployed as a C-MEX implementation. The compiled reference controller is denoted **MPC (MEX)**.
 
-After equal untimed warm-up calls and internal-state resets, `tic`/`toc` measures each state-to-action MEX call. Plant propagation, data storage, diagnostics, and full-sequence reconstruction are excluded. The reported times therefore represent matched end-to-end implementation latency, not solver-independent complexity.
+Both implementations receive the current state and return one control action. Before measurement, they execute the same number of untimed warm-up calls and their internal logical states are reset. Execution time is measured using `tic`/`toc` around the state-to-action MEX call. Plant propagation, data storage, constraint diagnostics, and full-sequence reconstruction are excluded from the timed region and evaluated separately.
+
+Therefore, the reported execution times represent end-to-end state-to-action latency under matched benchmark conditions, rather than solver-independent algorithmic complexity.
