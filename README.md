@@ -69,7 +69,7 @@ runMode = "report_and_plot";
 
 ## Main benchmark results
 
-The numerical evaluation examines **reference-behavior recovery**, **hard-constraint satisfaction and recursive feasibility**, and **online execution time** across three prediction horizons, `Np = Nc = 15, 40, 66`. The same 50 held-out initial conditions are used for the cross-horizon closed-loop evaluation.
+The numerical evaluation considers three prediction horizons, `Np = Nc = 15, 40, 66`, using the same 50 held-out initial conditions. Panels (a)–(c) show the closed-loop lateral tracking error for the three horizons: the solid curves denote the median absolute error, and the shaded regions indicate the 10th–90th percentile range across the tested initial conditions. Panels (d)–(f) summarize the relative tracking-cost gap, online execution time, and deployed library size, respectively.
 
 <p align="center">
   <img src="paper_lateral_figures/lateral_random_error_Np15.png"
@@ -107,6 +107,13 @@ The numerical evaluation examines **reference-behavior recovery**, **hard-constr
   <em>(f) Deployed library size.</em>
 </p>
 
-Across all three prediction horizons, the proposed controller remains close to the reference MPC behavior while satisfying the hard constraints and maintaining recursive feasibility. The median relative tracking-cost gap is `5.8%`, `1.3%`, and `1.0%` for `Np = 15, 40, 66`, respectively, while the measured mean-time speedup over **MPC (MEX)** is approximately `22.4×`, `32.1×`, and `85.3×`.
+**(i) Reference-behavior recovery.**  
+Across the three prediction horizons, the proposed controller remains close to the reference MPC behavior. The median relative tracking-cost gap is `5.8%`, `1.3%`, and `1.0%` for `Np = 15, 40, 66`, respectively, compared with substantially larger gaps for the coverage-only controller.
 
+**(ii) Online execution time.**  
+The proposed controller maintains low measured online latency across all three horizons. Relative to **MPC (MEX)**, the mean state-to-action execution-time speedup is approximately `22.4×`, `32.1×`, and `85.3×` for `Np = 15, 40, 66`, respectively.
+
+**(iii) Hard-constraint satisfaction and recursive feasibility.**  
 No hard-constraint violations were observed over the tested initial conditions and prediction horizons, and recursive feasibility was maintained throughout the simulations.
+
+These results are intended to demonstrate the complete workflow of the proposed method, from offline construction to closed-loop realization, and to evaluate its overall behavior in a finite-horizon constrained-control setting. The benchmark is not intended to position the proposed controller as a direct replacement for MPC, but rather to provide a controlled closed-loop setting in which reference-behavior recovery, constraint satisfaction, recursive feasibility, and online execution time can be assessed together.
