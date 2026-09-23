@@ -39,7 +39,6 @@ Therefore, the reported execution times represent end-to-end state-to-action lat
 
 ```matlab
 runMode = "simulate";
-rebuildMpcMex = 0;
 ```
 
 3. Run:
@@ -54,5 +53,4 @@ To regenerate reports and figures without rerunning the simulations, keep `later
 
 ```matlab
 runMode = "report_and_plot";
-rebuildMpcMex = 0;
 ```
