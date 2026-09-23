@@ -1,49 +1,22 @@
 # certified-data-driven-feedback-sim
 
 This work addresses **certified data-driven feedback synthesis under lifted hard polyhedral constraints**
-\[
-S\xi + Gu + Ew \leq b,
-\]
-where \(w\) is an auxiliary decision variable. For a given operating condition \(\xi\), a control action \(u\) is admissible if there exists some \(w\) satisfying the constraints. Equivalently,
-\[
-\mathcal U_{\mathrm f}(\xi)
-=
-\left\{
-u \mid \exists\,w:\ S\xi+Gu+Ew\leq b
-\right\}.
-\]
 
-Given finite reference data, the objective is to construct a feedback law that recovers the desired reference behavior while remaining admissible throughout a prescribed operating domain and admitting a uniform bound on online execution time.
+`Sξ + Gu + Ew ≤ b`,
 
-The resulting feedback controller is organized through two mappings:
-\[
-\xi_k
-\rightrightarrows
-\left\{
-u_{k,j}
-\right\}_{j=1}^{K_k}
-\subseteq
-\mathcal U_{\mathrm f}(\xi_k),
-\]
-followed by
-\[
-\left(
-\left\{u_{k,j}\right\}_{j=1}^{K_k},
-\xi_k,
-\eta_k
-\right)
-\mapsto
-u_k
-\in
-\operatorname{conv}
-\left\{
-u_{k,j}
-\right\}_{j=1}^{K_k}
-\subseteq
-\mathcal U_{\mathrm f}(\xi_k).
-\]
+where `w` is an auxiliary decision variable. For a given operating condition `ξ`, a control action `u` is admissible if there exists some `w` satisfying the constraints. The corresponding admissible-control set is
 
-The first mapping provides admissible control candidates under the hard constraints, while the second combines these candidates using the current operating condition and reference or task information to determine the applied control input.
+`U_f(ξ) = {u | ∃ w: Sξ + Gu + Ew ≤ b}`.
+
+Given finite reference data, the objective is to construct a feedback law that recovers the desired reference behavior while ensuring hard-constraint admissibility throughout a prescribed operating domain and a uniform bound on online execution time.
+
+The resulting feedback controller follows two mappings:
+
+`ξ_k ↠ {u_{k,j}}_{j=1}^{K_k} ⊆ U_f(ξ_k)`
+
+`({u_{k,j}}_{j=1}^{K_k}, ξ_k, η_k) → u_k ∈ conv{u_{k,j}}_{j=1}^{K_k} ⊆ U_f(ξ_k)`.
+
+The first mapping returns admissible control candidates under the hard constraints. The second combines these candidates using the current operating condition and reference or task information to determine the applied control input.
 
 <p align="center">
   <img src="paper_lateral_figures/Framework.png"
@@ -55,9 +28,9 @@ The first mapping provides admissible control candidates under the hard constrai
   <em>Certified feedback structure for direct online control evaluation.</em>
 </p>
 
-This repository focuses on one important specialization of the general formulation: **finite-horizon constrained control**. In this setting, \(w\) represents the future control sequence, so the applied input is admissible only if it admits a feasible continuation satisfying the remaining state, input, and terminal constraints.
+This repository considers one important specialization of the general formulation: **finite-horizon constrained control**. In this setting, `w` represents the future control sequence, so an applied input is admissible only if it admits a feasible continuation satisfying the remaining constraints.
 
-The repository provides the simulation and evaluation code for the **lateral-vehicle benchmark** used in the paper. This benchmark implements the complete closed-loop setting and evaluates reference-behavior recovery, hard-constraint satisfaction, recursive feasibility, and online execution time.
+The repository provides the simulation and evaluation code for the **lateral-vehicle benchmark** used in the paper. The benchmark implements the complete closed-loop setting and evaluates reference-behavior recovery, hard-constraint satisfaction, recursive feasibility, and online execution time.
 
 ## Repository contents
 
