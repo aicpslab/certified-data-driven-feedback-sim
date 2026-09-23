@@ -31,3 +31,28 @@ The reference controller is formulated as a condensed quadratic program, solved 
 Both implementations receive the current state and return one control action. Before measurement, they execute the same number of untimed warm-up calls and their internal logical states are reset. Execution time is measured using `tic`/`toc` around the state-to-action MEX call. Plant propagation, data storage, constraint diagnostics, and full-sequence reconstruction are excluded from the timed region and evaluated separately.
 
 Therefore, the reported execution times represent end-to-end state-to-action latency under matched benchmark conditions, rather than solver-independent algorithmic complexity.
+
+## Running the simulation
+
+1. Place all repository files in the same directory and set the MATLAB working directory to that folder.
+2. In `simulate_lateral_controller.m`, select:
+
+```matlab
+runMode = "simulate";
+rebuildMpcMex = 0;
+```
+
+3. Run:
+
+```matlab
+simulate_lateral_controller
+```
+
+The script evaluates all three prediction horizons, prints the complete report, saves the results to `lateral_simulation_results.mat`, and exports the figures and summary files to `paper_lateral_figures/`.
+
+To regenerate reports and figures without rerunning the simulations, keep `lateral_simulation_results.mat` in the same directory and use:
+
+```matlab
+runMode = "report_and_plot";
+rebuildMpcMex = 0;
+```
