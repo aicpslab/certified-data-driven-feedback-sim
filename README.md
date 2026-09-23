@@ -1,6 +1,6 @@
 # certified-data-driven-feedback-sim
 
-This repository provides simulation and evaluation code for the numerical study of **certified data-driven feedback synthesis under hard constraints**.
+This repository provides the simulation and evaluation artifacts for the numerical study of **certified data-driven feedback synthesis under hard constraints**.
 
 The proposed controller separates control admissibility from behavior realization. A **certified set-valued feedback map** returns a finite set of admissible control candidates at the current operating condition, and a **single-valued feedback law** combines these candidates to determine the applied control input. Hard-constraint feasibility is therefore built into the feedback structure.
 
@@ -14,13 +14,13 @@ The proposed controller separates control admissibility from behavior realizatio
   <em>Certified feedback structure used in the closed-loop implementation.</em>
 </p>
 
-The **lateral-vehicle benchmark** is used as a finite-horizon constrained-control specialization because it provides a complete closed-loop setting in which admissibility of the applied input depends on the existence of a feasible future continuation. This setting allows reference-behavior recovery, hard-constraint satisfaction, recursive feasibility, and online execution time to be evaluated together.
+The **lateral-vehicle benchmark** is used as a finite-horizon constrained-control specialization of the general formulation. In this setting, admissibility of the current control input depends on the existence of a feasible future continuation. The benchmark therefore provides a complete closed-loop setting in which reference-behavior recovery, hard-constraint satisfaction, recursive feasibility, and online execution time can be evaluated together.
 
 ## Repository contents
 
 ```text
 .
-├─ paper_lateral_figures/                        # Figures generated for the lateral-vehicle benchmark
+├─ paper_lateral_figures/                        # Figures for the lateral-vehicle benchmark
 ├─ simulate_lateral_controller.m                 # Runs the three-horizon simulations, reports statistics, and generates figures
 ├─ lateral_controller.mat                        # Precomputed controllers, certified law libraries, and deployed executor data
 ├─ lateral_simulation_results.mat                # Precomputed simulation results for the reported benchmark cases
@@ -30,23 +30,19 @@ The **lateral-vehicle benchmark** is used as a finite-horizon constrained-contro
 └─ lateral_mpc_kwik_mex_Np66_Nc66.mexw64        # Condensed KWIK MPC baseline for Np = Nc = 66
 ```
 
+The provided script and data files contain the vehicle-model, constraint, prediction-horizon, controller, and evaluation parameters required for the reported lateral-vehicle closed-loop simulations. No separate benchmark-parameter files are required.
+
 ## Tested environment
 
 - **OS:** Microsoft Windows 11 Pro
 - **CPU:** 12th Gen Intel(R) Core(TM) i7-12700KF (12 cores)
 - **MATLAB:** MATLAB 25.1.0.2973910 (R2025a) Update 1
-- **Required MATLAB toolboxes:** Model Predictive Control Toolbox; Optimization Toolbox; Statistics and Machine Learning Toolbox (used only for percentile-based timing and performance statistics).
+- **Required MATLAB toolboxes:** Model Predictive Control Toolbox; Optimization Toolbox; Statistics and Machine Learning Toolbox (used only for percentile-based timing and performance statistics)
 - **MEX platform:** 64-bit Windows (`.mexw64`)
-
-## Comparison fairness
-
-Both controllers are evaluated as **compiled MEX implementations under the same closed-loop benchmark conditions**, including the vehicle model, hard constraints, sampling time, prediction horizon, initial conditions, and simulation duration. The reference MPC is used without retuning and is formulated as a condensed quadratic program solved using the **active-set solver `mpcActiveSetSolver` from the MATLAB Model Predictive Control Toolbox**, with code generated using MATLAB Coder. The proposed controller is deployed as a **C-MEX implementation**, and the compiled reference controller is denoted **MPC (MEX)**.
-
-For both controllers, **the current state is used to compute one control action at each sampling instant**. The same untimed warm-up procedure is applied before measurement, and execution time is measured using `tic`/`toc` around the **state-to-action MEX call**. Plant propagation, data storage, constraint diagnostics, and full-sequence reconstruction are excluded. The reported times therefore represent the **measured end-to-end state-to-action latency** of the two compiled implementations under matched benchmark conditions.
 
 ## Running the simulation
 
-1. Place all repository files in the same directory and set the MATLAB working directory to that folder.
+1. Clone or download the repository and set the MATLAB working directory to the repository root.
 2. In `simulate_lateral_controller.m`, select:
 
 ```matlab
@@ -56,16 +52,22 @@ runMode = "simulate";
 3. Run:
 
 ```matlab
-run simulate_lateral_controller
+simulate_lateral_controller
 ```
 
 The script evaluates all three prediction horizons, prints the complete report, saves the results to `lateral_simulation_results.mat`, and exports the figures and summary files to `paper_lateral_figures/`.
 
-To regenerate reports and figures without rerunning the simulations, keep `lateral_simulation_results.mat` in the same directory and use:
+To regenerate the reports and figures without rerunning the simulations, keep `lateral_simulation_results.mat` in the repository root and use:
 
 ```matlab
 runMode = "report_and_plot";
 ```
+
+## Comparison fairness
+
+Both controllers are evaluated as **compiled MEX implementations under the same closed-loop benchmark conditions**, including the vehicle model, hard constraints, sampling time, prediction horizon, initial conditions, and simulation duration. The reference MPC is used without retuning and is formulated as a condensed quadratic program solved using the **active-set solver `mpcActiveSetSolver` from the MATLAB Model Predictive Control Toolbox**, with code generated using MATLAB Coder. The proposed controller is deployed as a **C-MEX implementation**, and the compiled reference controller is denoted **MPC (MEX)**.
+
+For both controllers, **the current state is used to compute one control action at each sampling instant**. The same untimed warm-up procedure is applied before measurement, and execution time is measured using `tic`/`toc` around the **state-to-action MEX call**. Plant propagation, data storage, constraint diagnostics, and full-sequence reconstruction are excluded. The reported times therefore represent the **measured end-to-end state-to-action latency** of the two compiled implementations under matched benchmark conditions.
 
 ## Main benchmark results
 
@@ -116,4 +118,16 @@ The proposed controller maintains low measured online latency across all three h
 **(iii) Hard-constraint satisfaction and recursive feasibility.**  
 No hard-constraint violations were observed over the tested initial conditions and prediction horizons, and recursive feasibility was maintained throughout the simulations.
 
-These results are intended to demonstrate the complete workflow of the proposed method, from offline construction to closed-loop realization, and to evaluate its overall behavior in a finite-horizon constrained-control setting. The benchmark is not intended to position the proposed controller as a direct replacement for MPC, but rather to provide a controlled closed-loop setting in which reference-behavior recovery, constraint satisfaction, recursive feasibility, and online execution time can be assessed together.
+Taken together, the benchmark demonstrates the proposed synthesis from offline construction to direct online feedback realization, with close reference-behavior recovery and low measured latency while satisfying the hard constraints and maintaining recursive feasibility. The proposed method is not tied to MPC or to this benchmark: here, MPC provides the reference behavior and compiled baseline, while the lateral-vehicle benchmark provides a finite-horizon closed-loop setting in which these properties can be evaluated together.
+
+## Citation
+
+This repository accompanies the manuscript **“Certified Data-Driven Feedback Synthesis under Lifted Hard Polyhedral Constraints,”** which is currently under review. Full bibliographic information and a persistent publication link will be added here once available.
+
+If you use the code or numerical results in this repository, please cite the associated manuscript. Complete citation information will be updated upon publication.
+
+## Additional information
+
+For questions regarding reproduction of the benchmark or the provided implementation, please open an issue in this repository or contact the authors. For MATLAB toolbox installation, licensing, or platform-specific issues, please refer to the corresponding MathWorks documentation.
+
+The provided MEX binaries target 64-bit Windows (`.mexw64`) and were generated and tested in the environment listed above.
