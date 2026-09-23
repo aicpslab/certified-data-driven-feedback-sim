@@ -69,47 +69,44 @@ runMode = "report_and_plot";
 
 ## Main benchmark results
 
-The numerical study focuses on three aspects: **reference-behavior recovery**, **hard-constraint satisfaction and recursive feasibility**, and **online execution time**. The cross-horizon evaluation uses the same 50 held-out initial conditions for `Np = Nc = 15, 40, 66`.
-
-| Metric | Np = 15 | Np = 40 | Np = 66 |
-|---|---:|---:|---:|
-| Median relative tracking-cost gap to MPC, Proposed | 5.8% | 1.3% | 1.0% |
-| Median relative tracking-cost gap to MPC, Coverage-only | 26.0% | 94.2% | 268.6% |
-| Mean-time speedup over MPC (MEX) | 22.4× | 32.1× | 85.3× |
-| Hard-constraint violations | None observed | None observed | None observed |
-| Recursive feasibility | Maintained | Maintained | Maintained |
-
-Across the tested prediction horizons, the proposed controller remains close to the reference MPC behavior while satisfying the hard constraints and maintaining recursive feasibility. Its measured online execution time remains low, with an increasing timing advantage over MPC (MEX) as the prediction horizon grows.
-
-### Representative closed-loop case
-
-The figure below shows the representative case with `Np = Nc = 40`, including lateral tracking error, steering input, and per-step online execution time.
+The numerical evaluation examines **reference-behavior recovery**, **hard-constraint satisfaction and recursive feasibility**, and **online execution time** across three prediction horizons, `Np = Nc = 15, 40, 66`. The same 50 held-out initial conditions are used for the cross-horizon closed-loop evaluation.
 
 <p align="center">
-  <img src="paper_lateral_figures/lateral_representative_Np40.png"
-       alt="Representative closed-loop evaluation for Np = Nc = 40"
-       width="820">
+  <img src="paper_lateral_figures/lateral_random_error_Np15.png"
+       alt="Closed-loop tracking for Np = 15"
+       width="32%">
+  <img src="paper_lateral_figures/lateral_random_error_Np40.png"
+       alt="Closed-loop tracking for Np = 40"
+       width="32%">
+  <img src="paper_lateral_figures/lateral_random_error_Np66.png"
+       alt="Closed-loop tracking for Np = 66"
+       width="32%">
 </p>
 
 <p align="center">
-  <em>Representative closed-loop evaluation for Np = Nc = 40.</em>
+  <em>(a) Np = 15.</em>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+  <em>(b) Np = 40.</em>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+  <em>(c) Np = 66.</em>
 </p>
-
-For this case, the proposed controller achieves a tracking cost of `0.1281` compared with `0.1261` for MPC (MEX), while reducing the measured mean state-to-action time from `71.170 μs` to `2.587 μs`. The corresponding 95th-percentile times are `240.900 μs` and `3.400 μs`, respectively, with no observed hard-constraint violations.
-
-### Cross-horizon trends
 
 <p align="center">
   <img src="paper_lateral_figures/lateral_horizon_delta_Je.png"
-       alt="Relative tracking-cost gap across prediction horizons"
-       width="48%">
+       alt="Relative tracking-cost gap"
+       width="32%">
   <img src="paper_lateral_figures/lateral_horizon_time.png"
-       alt="Online execution time across prediction horizons"
-       width="48%">
+       alt="Online execution time"
+       width="32%">
+  <img src="paper_lateral_figures/lateral_horizon_law_count.png"
+       alt="Deployed library size"
+       width="32%">
 </p>
 
 <p align="center">
-  <em>Reference-behavior recovery and measured online execution time across the three prediction horizons.</em>
+  <em>(d) Relative tracking-cost gap.</em>&nbsp;&nbsp;
+  <em>(e) Online execution time.</em>&nbsp;&nbsp;
+  <em>(f) Deployed library size.</em>
 </p>
 
-Additional closed-loop trajectories, multi-initial-condition results, and deployed-library statistics are available in `paper_lateral_figures/`.
+Across all three prediction horizons, the proposed controller remains close to the reference MPC behavior while satisfying the hard constraints and maintaining recursive feasibility. The median relative tracking-cost gap is `5.8%`, `1.3%`, and `1.0%` for `Np = 15, 40, 66`, respectively, while the measured mean-time speedup over **MPC (MEX)** is approximately `22.4×`, `32.1×`, and `85.3×`.
+
+No hard-constraint violations were observed over the tested initial conditions and prediction horizons, and recursive feasibility was maintained throughout the simulations.
