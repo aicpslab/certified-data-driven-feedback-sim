@@ -19,5 +19,5 @@ Simulation and evaluation code for the lateral-vehicle benchmark of certified da
 - **OS:** Microsoft Windows 11 Pro
 - **CPU:** 12th Gen Intel(R) Core(TM) i7-12700KF (12 cores)
 - **MATLAB:** MATLAB 25.1.0.2973910 (R2025a) Update 1
-- **Required MATLAB toolboxes:** Model Predictive Control Toolbox; Optimization Toolbox; Statistics and Machine Learning Toolbox
+- **Required MATLAB toolboxes:** Model Predictive Control Toolbox; Optimization Toolbox; Statistics and Machine Learning Toolbox (used only for percentile-based timing and performance statistics).
 - **MEX platform:** 64-bit Windows (`.mexw64`)
