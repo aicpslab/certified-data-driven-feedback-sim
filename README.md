@@ -1,8 +1,10 @@
 # certified-data-driven-feedback-sim
 
-This repository provides the simulation and evaluation artifacts for the numerical study of **certified data-driven feedback synthesis under hard constraints**.
+This repository provides the simulation and evaluation artifacts accompanying the numerical study of **Certified Data-Driven Feedback Synthesis under Lifted Hard Polyhedral Constraints**.
 
-The proposed controller separates control admissibility from behavior realization. A **certified set-valued feedback map** returns a finite and nonempty set of admissible control candidates at the current operating condition, and a **single-valued feedback law** combines these candidates to determine the applied control input. Hard-constraint feasibility is therefore built into the feedback structure.
+The underlying problem is to construct a feedback law from finite reference data that recovers the desired control behavior while guaranteeing hard-constraint admissibility throughout a prescribed operating domain and a uniform bound on online execution time. Under the lifted constraints considered in the paper, admissibility of an applied control action depends on the existence of a feasible auxiliary decision satisfying the constraints.
+
+To make hard-constraint feasibility a property of the feedback structure itself, a **certified set-valued feedback map** returns a finite and nonempty set of admissible control candidates at the current operating condition. A **single-valued feedback law** then combines these candidates to determine the applied control input. Consequently, hard-constraint feasibility is retained independently of the accuracy with which the reference behavior is recovered.
 
 <p align="center">
   <img src="paper_lateral_figures/Framework.png"
@@ -14,7 +16,7 @@ The proposed controller separates control admissibility from behavior realizatio
   <em>Certified feedback structure used in the closed-loop implementation.</em>
 </p>
 
-The **lateral-vehicle benchmark** is used as a finite-horizon constrained-control specialization of the general formulation. In this setting, admissibility of the current control input depends on the existence of a feasible future continuation. The benchmark therefore provides a complete closed-loop setting in which reference-behavior recovery, hard-constraint satisfaction, recursive feasibility, and online execution time can be evaluated together.
+The **lateral-vehicle benchmark** is used as a finite-horizon constrained-control specialization of this general formulation. In this setting, the auxiliary decision corresponds to a future control sequence, so admissibility of the current control input depends on the existence of a feasible future continuation. The benchmark therefore provides a complete closed-loop setting in which reference-behavior recovery, hard-constraint satisfaction, recursive feasibility, and online execution time can be evaluated together.
 
 ## Repository contents
 
@@ -30,7 +32,7 @@ The **lateral-vehicle benchmark** is used as a finite-horizon constrained-contro
 └─ lateral_mpc_kwik_mex_Np66_Nc66.mexw64        # Condensed KWIK MPC baseline for Np = Nc = 66
 ```
 
-The provided script and data files contain the vehicle-model, constraint, prediction-horizon, controller, and evaluation parameters required for the reported lateral-vehicle closed-loop simulations. No separate benchmark-parameter files are required.
+The provided script, data, and compiled controller files contain the vehicle model, constraints, sampling time, prediction-horizon settings, controller data, and evaluation parameters required for the reported lateral-vehicle closed-loop simulations. No separate benchmark-parameter files are required.
 
 ## Tested environment
 
@@ -71,7 +73,7 @@ For both controllers, **the current state is used to compute one control action 
 
 ## Main benchmark results
 
-The numerical evaluation considers three prediction horizons, `Np = Nc = 15, 40, 66`, using the same 50 held-out initial conditions. Panels (a)–(c) show the closed-loop lateral tracking error for the three horizons: the solid curves denote the median absolute error, and the shaded regions indicate the 10th–90th percentile range across the tested initial conditions. Panels (d)–(f) summarize the relative tracking-cost gap, online execution time, and deployed library size, respectively.
+The closed-loop evaluation considers three prediction horizons, `Np = Nc = 15, 40, 66`, using the same 50 held-out initial conditions. Panels (a)–(c) show the absolute lateral tracking error for the three horizons: the solid curves denote the median, and the shaded regions indicate the 10th–90th percentile range across the tested initial conditions. Panels (d)–(f) summarize the relative tracking-cost gap, online execution time, and deployed library size, respectively.
 
 <p align="center">
   <img src="paper_lateral_figures/lateral_random_error_Np15.png"
@@ -118,7 +120,7 @@ The proposed controller maintains low measured online latency across all three h
 **(iii) Hard-constraint satisfaction and recursive feasibility.**  
 No hard-constraint violations were observed over the tested initial conditions and prediction horizons, and recursive feasibility was maintained throughout the simulations.
 
-Taken together, the benchmark demonstrates the proposed synthesis from offline construction to direct online feedback realization, with close reference-behavior recovery and low measured latency while satisfying the hard constraints and maintaining recursive feasibility. The proposed method is not tied to MPC or to this benchmark: here, MPC provides the reference behavior and compiled baseline, while the lateral-vehicle benchmark provides a finite-horizon closed-loop setting in which these properties can be evaluated together.
+Taken together, the benchmark demonstrates the proposed synthesis from offline construction to direct online feedback realization, with close reference-behavior recovery and low measured latency while satisfying the hard constraints and maintaining recursive feasibility. The proposed method is not tied to the particular reference policy or benchmark used here: MPC provides the reference behavior and compiled baseline, while the lateral-vehicle example provides a finite-horizon closed-loop setting in which the resulting feedback properties can be evaluated together.
 
 ## Citation
 
@@ -128,6 +130,4 @@ If you use the code or numerical results in this repository, please cite the ass
 
 ## Additional information
 
-For questions regarding reproduction of the benchmark or the provided implementation, please open an issue in this repository or contact the authors. For MATLAB toolbox installation, licensing, or platform-specific issues, please refer to the corresponding MathWorks documentation.
-
-The provided MEX binaries target 64-bit Windows (`.mexw64`) and were generated and tested in the environment listed above.
+For questions regarding reproduction of the benchmark or the provided implementation, please contact the authors. For MATLAB toolbox installation, licensing, or platform-specific issues, please refer to the corresponding MathWorks documentation.
