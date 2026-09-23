@@ -1,8 +1,8 @@
 # certified-data-driven-feedback-sim
 
-This work addresses **certified data-driven feedback synthesis under hard constraints**. The objective is to recover desired control behavior from finite reference data while guaranteeing hard-constraint admissibility and bounded online execution.
+This repository provides simulation and evaluation code for the numerical study of **certified data-driven feedback synthesis under hard constraints**.
 
-The proposed controller separates admissibility from behavior realization. A **certified set-valued feedback map** returns a finite set of admissible control candidates at the current operating condition, and a **single-valued feedback law** combines these candidates to determine the applied control input. As a result, hard-constraint feasibility is built into the feedback structure rather than enforced through online constrained optimization.
+The proposed controller separates control admissibility from behavior realization. A **certified set-valued feedback map** returns a finite set of admissible control candidates at the current operating condition, and a **single-valued feedback law** combines these candidates to determine the applied control input. Hard-constraint feasibility is therefore built into the feedback structure.
 
 <p align="center">
   <img src="paper_lateral_figures/Framework.png"
@@ -11,10 +11,10 @@ The proposed controller separates admissibility from behavior realization. A **c
 </p>
 
 <p align="center">
-  <em>Certified feedback structure used for online control evaluation.</em>
+  <em>Certified feedback structure used in the closed-loop implementation.</em>
 </p>
 
-This repository provides the simulation and evaluation code for a **finite-horizon constrained lateral-vehicle benchmark**, which is one specialization of the general formulation. In this setting, admissibility of the applied input depends on the existence of a feasible future control continuation. The benchmark provides a complete closed-loop evaluation of reference-behavior recovery, hard-constraint satisfaction, recursive feasibility, and online execution time.
+The **lateral-vehicle benchmark** is used as a finite-horizon constrained-control specialization because it provides a complete closed-loop setting in which admissibility of the applied input depends on the existence of a feasible future continuation. This setting allows reference-behavior recovery, hard-constraint satisfaction, recursive feasibility, and online execution time to be evaluated together.
 
 ## Repository contents
 
