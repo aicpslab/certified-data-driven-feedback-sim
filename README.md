@@ -26,7 +26,7 @@ Simulation and evaluation code for the lateral-vehicle benchmark of certified da
 
 Both controllers are evaluated as compiled MEX implementations within the same MATLAB closed-loop simulation environment. They use the same vehicle model, hard constraints, sampling time, prediction horizon, initial conditions, and simulation duration. The reference MPC is used without retuning.
 
-The reference controller is formulated as a condensed quadratic program, solved using the active-set solver from the MATLAB Model Predictive Control Toolbox, and compiled into MEX using MATLAB Coder. The proposed controller is deployed as a C-MEX implementation. The compiled reference controller is denoted **MPC (MEX)**.
+The reference controller is formulated as a condensed quadratic program, solved using the **active-set solver `mpcActiveSetSolver` from the MATLAB Model Predictive Control Toolbox**, and compiled into MEX using MATLAB Coder. The proposed controller is deployed as a C-MEX implementation. The compiled reference controller is denoted **MPC (MEX)**.
 
 Both implementations receive the current state and return one control action. Before measurement, they execute the same number of untimed warm-up calls and their internal logical states are reset. Execution time is measured using `tic`/`toc` around the state-to-action MEX call. Plant propagation, data storage, constraint diagnostics, and full-sequence reconstruction are excluded from the timed region and evaluated separately.
 
