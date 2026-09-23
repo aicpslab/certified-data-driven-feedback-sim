@@ -66,3 +66,50 @@ To regenerate reports and figures without rerunning the simulations, keep `later
 ```matlab
 runMode = "report_and_plot";
 ```
+
+## Main benchmark results
+
+The numerical study focuses on three aspects: **reference-behavior recovery**, **hard-constraint satisfaction and recursive feasibility**, and **online execution time**. The cross-horizon evaluation uses the same 50 held-out initial conditions for `Np = Nc = 15, 40, 66`.
+
+| Metric | Np = 15 | Np = 40 | Np = 66 |
+|---|---:|---:|---:|
+| Median relative tracking-cost gap to MPC, Proposed | 5.8% | 1.3% | 1.0% |
+| Median relative tracking-cost gap to MPC, Coverage-only | 26.0% | 94.2% | 268.6% |
+| Mean-time speedup over MPC (MEX) | 22.4× | 32.1× | 85.3× |
+| Hard-constraint violations | None observed | None observed | None observed |
+| Recursive feasibility | Maintained | Maintained | Maintained |
+
+Across the tested prediction horizons, the proposed controller remains close to the reference MPC behavior while satisfying the hard constraints and maintaining recursive feasibility. Its measured online execution time remains low, with an increasing timing advantage over MPC (MEX) as the prediction horizon grows.
+
+### Representative closed-loop case
+
+The figure below shows the representative case with `Np = Nc = 40`, including lateral tracking error, steering input, and per-step online execution time.
+
+<p align="center">
+  <img src="paper_lateral_figures/lateral_representative_Np40.png"
+       alt="Representative closed-loop evaluation for Np = Nc = 40"
+       width="820">
+</p>
+
+<p align="center">
+  <em>Representative closed-loop evaluation for Np = Nc = 40.</em>
+</p>
+
+For this case, the proposed controller achieves a tracking cost of `0.1281` compared with `0.1261` for MPC (MEX), while reducing the measured mean state-to-action time from `71.170 μs` to `2.587 μs`. The corresponding 95th-percentile times are `240.900 μs` and `3.400 μs`, respectively, with no observed hard-constraint violations.
+
+### Cross-horizon trends
+
+<p align="center">
+  <img src="paper_lateral_figures/lateral_horizon_delta_Je.png"
+       alt="Relative tracking-cost gap across prediction horizons"
+       width="48%">
+  <img src="paper_lateral_figures/lateral_horizon_time.png"
+       alt="Online execution time across prediction horizons"
+       width="48%">
+</p>
+
+<p align="center">
+  <em>Reference-behavior recovery and measured online execution time across the three prediction horizons.</em>
+</p>
+
+Additional closed-loop trajectories, multi-initial-condition results, and deployed-library statistics are available in `paper_lateral_figures/`.
