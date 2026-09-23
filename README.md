@@ -1,6 +1,20 @@
 # certified-data-driven-feedback-sim
 
-Simulation and evaluation code for the lateral-vehicle benchmark of certified data-driven feedback control under hard constraints.
+This work addresses **certified data-driven feedback synthesis under lifted hard polyhedral constraints**. Given finite reference data and known hard constraints, the objective is to construct a feedback law that recovers the desired reference behavior while ensuring that every applied control action is admissible throughout a prescribed operating domain and that online execution time remains uniformly bounded.
+
+<p align="center">
+  <img src="paper_lateral_figures/Framework.png"
+       alt="Certified data-driven feedback structure"
+       width="720">
+</p>
+
+<p align="center">
+  <em>Certified feedback structure used in the proposed synthesis framework.</em>
+</p>
+
+The general formulation covers constrained-control problems in which admissibility of the applied input depends on the existence of an auxiliary feasible decision. This repository focuses on one important specialization: **finite-horizon constrained control**, where the auxiliary decision corresponds to a feasible future control continuation. :chatgpt-content-reference{index="2"}
+
+The repository provides the simulation and evaluation code for the **lateral-vehicle benchmark** used in the paper. The benchmark implements the complete closed-loop setting and evaluates reference-behavior recovery, hard-constraint satisfaction, recursive feasibility, and online execution time.
 
 ## Repository contents
 
