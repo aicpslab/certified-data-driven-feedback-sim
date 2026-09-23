@@ -2,7 +2,7 @@
 
 This repository provides the simulation and evaluation artifacts for the numerical study of **certified data-driven feedback synthesis under hard constraints**.
 
-The proposed controller separates control admissibility from behavior realization. A **certified set-valued feedback map** returns a finite set of admissible control candidates at the current operating condition, and a **single-valued feedback law** combines these candidates to determine the applied control input. Hard-constraint feasibility is therefore built into the feedback structure.
+The proposed controller separates control admissibility from behavior realization. A **certified set-valued feedback map** returns a finite and nonempty set of admissible control candidates at the current operating condition, and a **single-valued feedback law** combines these candidates to determine the applied control input. Hard-constraint feasibility is therefore built into the feedback structure.
 
 <p align="center">
   <img src="paper_lateral_figures/Framework.png"
