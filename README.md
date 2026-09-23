@@ -7,7 +7,7 @@ The proposed controller separates control admissibility from behavior realizatio
 <p align="center">
   <img src="paper_lateral_figures/Framework.png"
        alt="Certified data-driven feedback structure"
-       width="480">
+       width="540">
 </p>
 
 <p align="center">
