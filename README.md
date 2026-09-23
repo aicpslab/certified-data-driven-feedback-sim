@@ -1,22 +1,8 @@
 # certified-data-driven-feedback-sim
 
-This work addresses **certified data-driven feedback synthesis under lifted hard polyhedral constraints**
+This work addresses **certified data-driven feedback synthesis under hard constraints**. The objective is to recover desired control behavior from finite reference data while guaranteeing hard-constraint admissibility and bounded online execution.
 
-`Sξ + Gu + Ew ≤ b`,
-
-where `w` is an auxiliary decision variable. For a given operating condition `ξ`, a control action `u` is admissible if there exists some `w` satisfying the constraints. The corresponding admissible-control set is
-
-`U_f(ξ) = {u | ∃ w: Sξ + Gu + Ew ≤ b}`.
-
-Given finite reference data, the objective is to construct a feedback law that recovers the desired reference behavior while ensuring hard-constraint admissibility throughout a prescribed operating domain and a uniform bound on online execution time.
-
-The resulting feedback controller follows two mappings:
-
-`ξ_k ↠ {u_{k,j}}_{j=1}^{K_k} ⊆ U_f(ξ_k)`
-
-`({u_{k,j}}_{j=1}^{K_k}, ξ_k, η_k) → u_k ∈ conv{u_{k,j}}_{j=1}^{K_k} ⊆ U_f(ξ_k)`.
-
-The first mapping returns admissible control candidates under the hard constraints. The second combines these candidates using the current operating condition and reference or task information to determine the applied control input.
+The proposed controller separates admissibility from behavior realization. A **certified set-valued feedback map** returns a finite set of admissible control candidates at the current operating condition, and a **single-valued feedback law** combines these candidates to determine the applied control input. As a result, hard-constraint feasibility is built into the feedback structure rather than enforced through online constrained optimization.
 
 <p align="center">
   <img src="paper_lateral_figures/Framework.png"
@@ -25,12 +11,10 @@ The first mapping returns admissible control candidates under the hard constrain
 </p>
 
 <p align="center">
-  <em>Certified feedback structure for direct online control evaluation.</em>
+  <em>Certified feedback structure used for online control evaluation.</em>
 </p>
 
-This repository considers one important specialization of the general formulation: **finite-horizon constrained control**. In this setting, `w` represents the future control sequence, so an applied input is admissible only if it admits a feasible continuation satisfying the remaining constraints.
-
-The repository provides the simulation and evaluation code for the **lateral-vehicle benchmark** used in the paper. The benchmark implements the complete closed-loop setting and evaluates reference-behavior recovery, hard-constraint satisfaction, recursive feasibility, and online execution time.
+This repository provides the simulation and evaluation code for a **finite-horizon constrained lateral-vehicle benchmark**, which is one specialization of the general formulation. In this setting, admissibility of the applied input depends on the existence of a feasible future control continuation. The benchmark provides a complete closed-loop evaluation of reference-behavior recovery, hard-constraint satisfaction, recursive feasibility, and online execution time.
 
 ## Repository contents
 
