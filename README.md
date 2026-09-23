@@ -56,7 +56,7 @@ runMode = "simulate";
 3. Run:
 
 ```matlab
-simulate_lateral_controller
+run simulate_lateral_controller
 ```
 
 The script evaluates all three prediction horizons, prints the complete report, saves the results to `lateral_simulation_results.mat`, and exports the figures and summary files to `paper_lateral_figures/`.
