@@ -40,13 +40,9 @@ The **lateral-vehicle benchmark** is used as a finite-horizon constrained-contro
 
 ## Comparison fairness
 
-Both controllers are evaluated as **compiled MEX implementations under the same closed-loop benchmark conditions**, including the vehicle model, hard constraints, sampling time, prediction horizon, initial conditions, and simulation duration. The reference MPC is used without retuning.
+Both controllers are evaluated as **compiled MEX implementations under the same closed-loop benchmark conditions**, including the vehicle model, hard constraints, sampling time, prediction horizon, initial conditions, and simulation duration. The reference MPC is used without retuning and is formulated as a condensed quadratic program solved using the **active-set solver `mpcActiveSetSolver` from the MATLAB Model Predictive Control Toolbox**, with code generated using MATLAB Coder. The proposed controller is deployed as a **C-MEX implementation**, and the compiled reference controller is denoted **MPC (MEX)**.
 
-The reference controller is formulated as a condensed quadratic program, solved using the **active-set solver `mpcActiveSetSolver` from the MATLAB Model Predictive Control Toolbox**, and compiled into MEX using MATLAB Coder. The proposed controller is deployed as a **C-MEX implementation**. The compiled reference controller is denoted **MPC (MEX)**.
-
-For both controllers, **the current state is used to compute one control action at each sampling instant**. Before measurement, both implementations execute the same number of untimed warm-up calls and their internal logical states are reset. Execution time is measured using `tic`/`toc` around the **state-to-action MEX call**. Plant propagation, data storage, constraint diagnostics, and full-sequence reconstruction are excluded from the timed region.
-
-Accordingly, the reported execution times represent the **measured end-to-end state-to-action latency** of the two compiled implementations under matched benchmark conditions.
+For both controllers, **the current state is used to compute one control action at each sampling instant**. The same untimed warm-up procedure is applied before measurement, and execution time is measured using `tic`/`toc` around the **state-to-action MEX call**. Plant propagation, data storage, constraint diagnostics, and full-sequence reconstruction are excluded. The reported times therefore represent the **measured end-to-end state-to-action latency** of the two compiled implementations under matched benchmark conditions.
 
 ## Running the simulation
 
